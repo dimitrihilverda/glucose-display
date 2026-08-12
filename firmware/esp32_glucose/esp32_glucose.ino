@@ -241,15 +241,13 @@ static void draw_main() {
   gfx->fillScreen(DX_BG);
   time_t now = time(nullptr);
 
-  // "Chantie" where the app shows its wordmark
-  font_med();
-  gfx->setTextColor(DX_GRAY);
-  gfx->setCursor((SCR_W - text_w("Chantie")) / 2, 36);
-  gfx->print("Chantie");
+  // Chantie's wordmark, top-left with a little breathing room
+  gfx->draw16bitRGBBitmap(12, 10, (uint16_t *)CHANTIE_LOGO,
+                          CHANTIE_LOGO_W, CHANTIE_LOGO_H);
   if (!net_ok) {
     font_small();
     gfx->setTextColor(DX_RED);
-    gfx->setCursor(MARGIN, 18);
+    gfx->setCursor(SCR_W - text_w("geen wifi") - 6, 22);
     gfx->print("geen wifi");
   }
 
@@ -386,39 +384,40 @@ static void screen_settings() {
     gfx->fillScreen(TH_BG);
     display_header("opties");
     char b[32];
-    // one column: four value rows with -/+ zones, then toggle/action rows
-    struct Row { const char *label; char val[16]; } rows[4];
+    // one column: five value rows with -/+ zones, then toggle/action rows
+    struct Row { const char *label; char val[16]; } rows[5];
     snprintf(rows[0].val, 16, "%s", cfg.use_mmol ? "mmol/L" : "mg/dL"); rows[0].label = "eenheid";
     snprintf(rows[1].val, 16, "%.1f", cfg.low_mmol);   rows[1].label = "laag";
     snprintf(rows[2].val, 16, "%.1f", cfg.high_mmol);  rows[2].label = "hoog";
     snprintf(rows[3].val, 16, "%u%%", cfg.volume);     rows[3].label = "volume";
-    for (int i = 0; i < 4; i++) {
-      int y = 56 + i * 47;
-      gfx->fillRoundRect(4, y, 224, 43, 8, TH_PANEL);
+    snprintf(rows[4].val, 16, "%u%%", cfg.dim_pct);    rows[4].label = "dim";
+    for (int i = 0; i < 5; i++) {
+      int y = 54 + i * 42;
+      gfx->fillRoundRect(4, y, 224, 38, 8, TH_PANEL);
       font_med();
       gfx->setTextColor(TH_DIM);
-      gfx->setCursor(14, y + 29); gfx->print(rows[i].label);
+      gfx->setCursor(14, y + 27); gfx->print(rows[i].label);
       gfx->setTextColor(TH_TEXT);
-      gfx->setCursor(120, y + 29); gfx->print(rows[i].val);
-      btn(232, y, 40, 43, "-", false);
-      btn(276, y, 40, 43, "+", false);
+      gfx->setCursor(120, y + 27); gfx->print(rows[i].val);
+      btn(232, y, 40, 38, "-", false);
+      btn(276, y, 40, 38, "+", false);
     }
     snprintf(b, sizeof(b), "alarmen: %s", cfg.alarms_on ? "aan" : "uit");
-    btn(4, 56 + 4 * 47, 312, 43, b, cfg.alarms_on);
-    btn(4, 56 + 5 * 47, 312, 43,
+    btn(4, 54 + 5 * 42, 312, 38, b, cfg.alarms_on);
+    btn(4, 54 + 6 * 42, 312, 38,
         cfg.night_dim ? "nachtdim: aan (22-07)" : "nachtdim: uit", false);
-    btn(4, 56 + 6 * 47, 312, 43, "dexcom-login wijzigen", false);
-    btn(4, 56 + 7 * 47, 312, 43, "wifi wijzigen", false);
-    btn(4, 56 + 8 * 47, 312, 43, "terug", true);
+    btn(4, 54 + 7 * 42, 312, 38, "dexcom-login wijzigen", false);
+    btn(4, 54 + 8 * 42, 312, 38, "wifi wijzigen", false);
+    btn(4, 54 + 9 * 42, 312, 38, "terug", true);
     gfx->flush();
     wait_tap();
     beep_click(cfg.volume);
     bool minus = false;
     int row = -1;
-    for (int i = 0; i < 4; i++) {
-      int y = 56 + i * 47;
-      if (in(232, y, 40, 43)) { row = i; minus = true; }
-      if (in(276, y, 40, 43)) { row = i; minus = false; }
+    for (int i = 0; i < 5; i++) {
+      int y = 54 + i * 42;
+      if (in(232, y, 40, 38)) { row = i; minus = true; }
+      if (in(276, y, 40, 38)) { row = i; minus = false; }
     }
     if (row == 0) cfg.use_mmol = !cfg.use_mmol;
     else if (row == 1) cfg.low_mmol = constrain(cfg.low_mmol + (minus ? -0.5f : 0.5f), 3.0f, 6.5f);
@@ -427,11 +426,16 @@ static void screen_settings() {
       cfg.volume = constrain((int)cfg.volume + (minus ? -10 : 10), 10, 100);
       beep_ok(cfg.volume);
     }
-    else if (in(4, 56 + 4 * 47, 312, 43)) cfg.alarms_on = !cfg.alarms_on;
-    else if (in(4, 56 + 5 * 47, 312, 43)) cfg.night_dim = !cfg.night_dim;
-    else if (in(4, 56 + 6 * 47, 312, 43)) { config_save(); screen_dex_login(); }
-    else if (in(4, 56 + 7 * 47, 312, 43)) { config_save(); screen_wifi_setup(); }
-    else if (in(4, 56 + 8 * 47, 312, 43)) { config_save(); return; }
+    else if (row == 4) {
+      cfg.dim_pct = constrain((int)cfg.dim_pct + (minus ? -5 : 5), 5, 60);
+      display_backlight(cfg.dim_pct);   // live preview while adjusting
+    }
+    else if (in(4, 54 + 5 * 42, 312, 38)) cfg.alarms_on = !cfg.alarms_on;
+    else if (in(4, 54 + 6 * 42, 312, 38)) cfg.night_dim = !cfg.night_dim;
+    else if (in(4, 54 + 7 * 42, 312, 38)) { config_save(); screen_dex_login(); }
+    else if (in(4, 54 + 8 * 42, 312, 38)) { config_save(); screen_wifi_setup(); }
+    else if (in(4, 54 + 9 * 42, 312, 38)) { config_save(); display_backlight(100); return; }
+    if (row != 4) display_backlight(100);   // leaving the preview
     config_save();
   }
 }
@@ -505,7 +509,7 @@ void loop() {
     localtime_r(&nw, &tmnow);
     bool night = cfg.night_dim && (tmnow.tm_hour >= 22 || tmnow.tm_hour < 7);
     bool full = !night || out_of_range_now() || millis() < wake_until_ms;
-    display_backlight(full ? 100 : 12);
+    display_backlight(full ? 100 : cfg.dim_pct);
   }
   if (net_ok && (last_fetch_ms == 0 || millis() - last_fetch_ms > 60000)) {
     int n = dex_fetch(hist, HIST_MAX, 6 * 60);

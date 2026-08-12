@@ -18,6 +18,7 @@ struct KioskConfig {
   bool alarms_on;
   uint8_t volume;       // percent, shares the aimelo/vol convention
   bool night_dim;       // dim the backlight between 22:00 and 07:00
+  uint8_t dim_pct;      // night brightness, percent
   bool accepted;        // disclaimer accepted
 };
 
@@ -37,6 +38,7 @@ static void config_load() {
   cfg.alarms_on  = cfg_prefs.getBool("alarm", true);
   cfg.volume     = cfg_prefs.getUChar("vol", 70);
   cfg.night_dim  = cfg_prefs.getBool("ndim", true);
+  cfg.dim_pct    = cfg_prefs.getUChar("dimpct", 12);
   cfg.accepted   = cfg_prefs.getBool("ok", false);
 }
 
@@ -52,6 +54,7 @@ static void config_save() {
   cfg_prefs.putBool("alarm", cfg.alarms_on);
   cfg_prefs.putUChar("vol", cfg.volume);
   cfg_prefs.putBool("ndim", cfg.night_dim);
+  cfg_prefs.putUChar("dimpct", cfg.dim_pct);
   cfg_prefs.putBool("ok", cfg.accepted);
 }
 

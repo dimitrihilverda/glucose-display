@@ -79,6 +79,7 @@ static bool display_begin() {
 // draw from the BASELINE and ignore the background colour, so callers paint
 // their own background and pass a baseline y.
 #include "fonts.h"
+#include "chantie_logo.h"
 static void font_big()    { gfx->setFont(&GlucoseBig); gfx->setTextSize(1); }
 static void font_med()    { gfx->setFont(&UiMed);      gfx->setTextSize(1); }
 static void font_small()  { gfx->setFont(&UiSmall);    gfx->setTextSize(1); }

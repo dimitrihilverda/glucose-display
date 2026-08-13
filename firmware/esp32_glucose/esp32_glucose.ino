@@ -7,7 +7,7 @@
 // NOT A MEDICAL DEVICE. Readings arrive via Dexcom Share with the usual
 // 5-minute cadence; treatment decisions belong on the official Dexcom app.
 
-#define FW_VERSION "1.4"
+#define FW_VERSION "1.5"
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -31,6 +31,10 @@ static uint32_t last_nodata_ms = 0;
 static uint32_t snooze_until_ms = 0;
 static uint32_t wake_until_ms = 0;
 static int greeted_yday = -1;          // tm_yday of the last morning greeting
+static uint8_t alarm_kind = 0;         // 0 none, 1 low, 2 high (active episode)
+static uint8_t alarm_count = 0;        // sounds played this episode
+static uint32_t alarm_next_ms = 0;
+static bool was_out = false;
 static bool net_ok = false, dex_ok = false;
 static WebServer web(80);
 
@@ -564,11 +568,12 @@ static void screen_greeting() {
   gfx->print(cfg.display_name);
   draw_heart(SCR_W / 2 + text_w(cfg.display_name) / 2 + 12, 198, 8, DX_PINKD);
   if (mx > 0) {
-    char s[48];
-    snprintf(s, sizeof(s), "vannacht tussen %.1f en %.1f", mn, mx);
-    display_centred(s, 260, 2, DX_TEXT);
+    display_centred("vannacht tussen", 248, 2, DX_TEXT);
+    char s[24];
+    snprintf(s, sizeof(s), "%.1f en %.1f", mn, mx);
+    display_centred(s, 284, 2, DX_TEXT);
   }
-  display_centred("fijne dag!", 310, 1, DX_GRAY);
+  display_centred("fijne dag!", 330, 1, DX_GRAY);
   gfx->flush();
   wait_tap_for(30000);
   touch_irq = false;
@@ -708,20 +713,26 @@ static void screen_settings_more() {
     snprintf(b, sizeof(b), "alarmgeluid: %s", ASTYLES[cfg.alarm_style % 3]);
     btn(4, 204, 312, 42, b, false);
     // night window hours with -/+
-    snprintf(b, sizeof(b), "nacht start  %02u:00", cfg.night_start);
-    gfx->fillRoundRect(4, 252, 224, 42, 8, TH_PANEL);
+    snprintf(b, sizeof(b), "herhaal alarm %ux", cfg.alarm_repeats);
+    gfx->fillRoundRect(4, 250, 224, 40, 8, TH_PANEL);
     font_med(); gfx->setTextColor(TH_TEXT);
-    gfx->setCursor(14, 252 + 29); gfx->print(b);
-    btn(232, 252, 40, 42, "-", false);
-    btn(276, 252, 40, 42, "+", false);
-    snprintf(b, sizeof(b), "nacht eind   %02u:00", cfg.night_end);
-    gfx->fillRoundRect(4, 300, 224, 42, 8, TH_PANEL);
+    gfx->setCursor(14, 250 + 28); gfx->print(b);
+    btn(232, 250, 40, 40, "-", false);
+    btn(276, 250, 40, 40, "+", false);
+    snprintf(b, sizeof(b), "nacht start  %02u:00", cfg.night_start);
+    gfx->fillRoundRect(4, 296, 224, 40, 8, TH_PANEL);
     gfx->setTextColor(TH_TEXT);
-    gfx->setCursor(14, 300 + 29); gfx->print(b);
-    btn(232, 300, 40, 42, "-", false);
-    btn(276, 300, 40, 42, "+", false);
-    btn(4, 366, 312, 44, "systeem & testen...", false);
-    btn(4, 424, 312, 44, "terug", true);
+    gfx->setCursor(14, 296 + 28); gfx->print(b);
+    btn(232, 296, 40, 40, "-", false);
+    btn(276, 296, 40, 40, "+", false);
+    snprintf(b, sizeof(b), "nacht eind   %02u:00", cfg.night_end);
+    gfx->fillRoundRect(4, 342, 224, 40, 8, TH_PANEL);
+    gfx->setTextColor(TH_TEXT);
+    gfx->setCursor(14, 342 + 28); gfx->print(b);
+    btn(232, 342, 40, 40, "-", false);
+    btn(276, 342, 40, 40, "+", false);
+    btn(4, 392, 312, 40, "systeem & testen...", false);
+    btn(4, 438, 312, 40, "terug", true);
     gfx->flush();
     wait_tap();
     beep_click(cfg.volume);
@@ -732,12 +743,14 @@ static void screen_settings_more() {
       cfg.alarm_style = (cfg.alarm_style + 1) % 3;
       beep_alarm_high(cfg.volume);            // instant preview
     }
-    else if (in(232, 252, 40, 42)) cfg.night_start = (cfg.night_start + 23) % 24;
-    else if (in(276, 252, 40, 42)) cfg.night_start = (cfg.night_start + 1) % 24;
-    else if (in(232, 300, 40, 42)) cfg.night_end = (cfg.night_end + 23) % 24;
-    else if (in(276, 300, 40, 42)) cfg.night_end = (cfg.night_end + 1) % 24;
-    else if (in(4, 366, 312, 44)) { config_save(); screen_settings_system(); }
-    else if (in(4, 424, 312, 44)) { config_save(); return; }
+    else if (in(232, 250, 40, 40)) cfg.alarm_repeats = max(1, cfg.alarm_repeats - 1);
+    else if (in(276, 250, 40, 40)) cfg.alarm_repeats = min(10, cfg.alarm_repeats + 1);
+    else if (in(232, 296, 40, 40)) cfg.night_start = (cfg.night_start + 23) % 24;
+    else if (in(276, 296, 40, 40)) cfg.night_start = (cfg.night_start + 1) % 24;
+    else if (in(232, 342, 40, 40)) cfg.night_end = (cfg.night_end + 23) % 24;
+    else if (in(276, 342, 40, 40)) cfg.night_end = (cfg.night_end + 1) % 24;
+    else if (in(4, 392, 312, 40)) { config_save(); screen_settings_system(); }
+    else if (in(4, 438, 312, 40)) { config_save(); return; }
     config_save();
   }
 }
@@ -808,6 +821,10 @@ static void screen_settings() {
 }
 
 // ---- alarms ---------------------------------------------------------------------------
+// Out-of-range alarms are EPISODES: they start when a reading crosses out of
+// range, re-sound every 30 seconds up to cfg.alarm_repeats times, stop on a
+// tap (30-minute snooze), and re-arm only after the value has been back in
+// range. Fast-drop stays a one-shot advisory; no-data has its own cadence.
 static void handle_alarms() {
   if (!cfg.alarms_on || hist_n == 0) return;
   time_t now = time(nullptr);
@@ -822,27 +839,47 @@ static void handle_alarms() {
     }
     return;                              // stale data: no value alarms
   }
-  if (millis() < snooze_until_ms) return;
   if (now - cur.t > 12 * 60) return;
-  if (cur.t == last_alarm_t) return;     // one alarm per reading max
 
   float v = to_mmol(cur.mgdl);
   float prev = hist_n > 1 ? to_mmol(hist[1].mgdl) : v;
-  if (v < cfg.low_mmol) {
-    beep_alarm_low(cfg.volume);
-    last_alarm_t = cur.t;
-  } else if (v > cfg.high_mmol) {
-    if (!(cfg.quiet_high_night && is_night())) {
-      beep_alarm_high(cfg.volume);
+  bool low = v < cfg.low_mmol, high = v > cfg.high_mmol;
+
+  if (low || high) {
+    if (!was_out) {                      // a fresh episode begins
+      was_out = true;
+      alarm_kind = low ? 1 : 2;
+      alarm_count = 0;
+      alarm_next_ms = millis();          // first sound right away
+    } else if ((low && alarm_kind == 2) || (high && alarm_kind == 1)) {
+      alarm_kind = low ? 1 : 2;          // flipped side: new episode
+      alarm_count = 0;
+      alarm_next_ms = millis();
+    }
+  } else {
+    was_out = false;                     // back in range: re-arm
+    alarm_kind = 0;
+    if (cfg.alarm_fast && millis() >= snooze_until_ms &&
+        cur.t != last_alarm_t &&
+        (cur.trend == 7 || (prev - v) >= 0.85f) &&
+        v < cfg.low_mmol + 2.0f) {
+      beep_fastdrop(cfg.volume);         // falling fast toward the floor
       last_alarm_t = cur.t;
     }
-  } else if (cfg.alarm_fast &&
-             (cur.trend == 7 || (prev - v) >= 0.85f) &&
-             v < cfg.low_mmol + 2.0f) {
-    // falling fast toward the floor: warn before the low happens
-    beep_fastdrop(cfg.volume);
-    last_alarm_t = cur.t;
   }
+}
+
+// Called every loop: plays the active episode's sound on schedule.
+static void alarm_pump() {
+  if (alarm_kind == 0 || !cfg.alarms_on) return;
+  if (millis() < snooze_until_ms) return;          // tapped: silenced
+  if (alarm_count >= cfg.alarm_repeats) return;    // gave up for this episode
+  if (millis() < alarm_next_ms) return;
+  if (alarm_kind == 2 && cfg.quiet_high_night && is_night()) return;
+  if (alarm_kind == 1) beep_alarm_low(cfg.volume);
+  else beep_alarm_high(cfg.volume);
+  alarm_count++;
+  alarm_next_ms = millis() + 30000;
 }
 
 // ---- web security -------------------------------------------------------------------------
@@ -967,6 +1004,7 @@ static void web_settings_form() {
   for (int i = 0; i < 3; i++)
     h += "<option value='" + String(i) + "'" + (cfg.alarm_style == i ? " selected" : "") + ">" + asty[i] + "</option>";
   h += "</select>";
+  h += "<label>alarm herhalen (1-10x)</label><input name='areps' type='number' min='1' max='10' value='" + String(cfg.alarm_repeats) + "'>";
   h += "<label>nacht van (uur)</label><input name='nstart' type='number' min='0' max='23' value='" + String(cfg.night_start) + "'>";
   h += "<label>nacht tot (uur)</label><input name='nend' type='number' min='0' max='23' value='" + String(cfg.night_end) + "'>";
   h += "<label>nachtmodus</label><select name='night'>";
@@ -1014,6 +1052,7 @@ static void web_settings_save() {
   if (web.hasArg("dim"))  cfg.dim_pct   = constrain(web.arg("dim").toInt(), 5, 60);
   if (web.hasArg("night")) cfg.night_mode = constrain(web.arg("night").toInt(), 0, 2);
   if (web.hasArg("astyle")) cfg.alarm_style = constrain(web.arg("astyle").toInt(), 0, 2);
+  if (web.hasArg("areps")) cfg.alarm_repeats = constrain(web.arg("areps").toInt(), 1, 10);
   if (web.hasArg("nstart")) cfg.night_start = constrain(web.arg("nstart").toInt(), 0, 23);
   if (web.hasArg("nend"))   cfg.night_end   = constrain(web.arg("nend").toInt(), 0, 23);
   if (web.hasArg("theme")) cfg.theme = constrain(web.arg("theme").toInt(), 0, THEME_COUNT - 1);
@@ -1087,6 +1126,7 @@ void loop() {
     delay(2000);
   }
   web.handleClient();
+  alarm_pump();
 
   // Backlight: dim at night (mode 1 and 2), never while out of range, and a
   // tap buys a minute of full brightness.

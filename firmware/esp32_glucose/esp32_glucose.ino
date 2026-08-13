@@ -93,13 +93,25 @@ static void screen_wifi_setup() {
     display_header("wifi");
     display_centred("netwerken zoeken...", 150, 2, TH_DIM);
     gfx->flush();
+    // A scan fails (returns a negative code) while the station is still
+    // trying to reach a stored network, and after a failed connect it keeps
+    // retrying in the background. Stop it first, then bring the radio back
+    // up idle so the scan actually runs.
+    WiFi.disconnect(true);
+    delay(200);
+    WiFi.mode(WIFI_STA);
+    delay(200);
+    WiFi.scanDelete();
     int n = WiFi.scanNetworks();
+    if (n < 0) n = 0;
     gfx->fillScreen(TH_BG);
     display_header("wifi");
     font_med();
     gfx->setTextColor(TH_DIM);
     gfx->setCursor(MARGIN, 78); gfx->print("kies je netwerk:");
     int shown = min(n, 8);
+    if (shown == 0)
+      display_centred("geen netwerken gevonden", 200, 2, GL_LOW);
     for (int i = 0; i < shown; i++) {
       int y = 90 + i * 42;
       gfx->fillRoundRect(4, y, 312, 36, 6, TH_PANEL);

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>glucose-display — bouw je eigen Dexcom-nachtkastje</title>
+<style>
+  :root { --bg:#101820; --panel:#22303f; --panel2:#33475B; --text:#fff; --dim:#90a0ac; --pink:#E75480; --green:#27AE60; --yel:#FFCC00; --red:#FF6060; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui,sans-serif; line-height:1.65; }
+  a { color:var(--pink); }
+  .wrap { max-width:860px; margin:0 auto; padding:0 20px; }
+  header { padding:56px 0 36px; text-align:center; border-bottom:2px solid var(--pink); }
+  header h1 { font-size:2.4rem; }
+  header h1 .hart { color:var(--pink); }
+  header p.sub { color:var(--dim); max-width:620px; margin:12px auto 0; }
+  .pill { display:inline-block; background:var(--panel2); border-radius:999px; padding:4px 14px; margin:14px 5px 0; font-size:.85rem; color:var(--dim); }
+  section { padding:42px 0; border-bottom:1px solid var(--panel); }
+  h2 { color:var(--pink); font-size:1.35rem; margin-bottom:14px; }
+  .warn { background:var(--panel); border-left:4px solid var(--red); padding:14px 18px; border-radius:0 10px 10px 0; margin:18px 0; }
+  .warn strong { color:var(--red); }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px; margin-top:16px; }
+  .card { background:var(--panel); border-radius:14px; padding:18px 20px; }
+  .card h3 { margin-bottom:8px; font-size:1.05rem; }
+  .card p, .card li { color:var(--dim); font-size:.95rem; }
+  .card ul { margin-left:18px; }
+  ol.steps { margin:14px 0 0 20px; }
+  ol.steps li { margin-bottom:10px; }
+  esp-web-install-button { --esp-tools-button-color:var(--bg); --esp-tools-button-background-color:var(--pink); }
+  .mock { display:block; margin:20px auto 6px; border:8px solid #1a232e; border-radius:14px; max-width:240px; width:60%; }
+  .mock-cap { text-align:center; color:var(--dim); font-size:.85rem; }
+  code { background:var(--panel); padding:2px 7px; border-radius:6px; font-size:.9em; }
+  footer { padding:34px 0 46px; color:var(--dim); text-align:center; font-size:.9rem; }
+  .flashbox { text-align:center; background:var(--panel); border-radius:16px; padding:26px; margin-top:18px; }
+  .flashbox p { color:var(--dim); margin-bottom:14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>glucose-display <span class="hart">&hearts;</span></h1>
+    <p class="sub">Bouw je eigen Dexcom-nachtkastje: live glucosewaarden groot in beeld op een
+       ESP32-touchscreen van ~€30. Grote waarde met trendpijl, grafiek, alarmen via de speaker,
+       nachtklok — en 's nachts dimt hij vanzelf.</p>
+    <span class="pill">100% open source</span>
+    <span class="pill">setup volledig op het scherm</span>
+    <span class="pill">jouw login blijft op het apparaat</span>
+    <span class="pill"><a href="https://github.com/dimitrihilverda/glucose-display">GitHub</a></span>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="warn"><strong>Geen medisch hulpmiddel.</strong> Dit is een hobbyproject.
+      Waarden lopen via Dexcom Share en kunnen achterlopen, wegvallen of afwijken.
+      Neem behandelbeslissingen uitsluitend op basis van je officiële Dexcom-app of een
+      bloedglucosemeter. Alarmen van dit kastje zijn een extraatje, nooit je vangnet.</div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Wat je nodig hebt</h2>
+    <div class="cards">
+      <div class="card"><h3>📟 Het board (~€30)</h3>
+        <p>Guition <strong>JC3248W535C</strong> — 3.5" ESP32-S3 touchscreen, 480×320. Zoek op AliExpress
+        naar de modelnaam. Meer is niet nodig.</p></div>
+      <div class="card"><h3>📈 Dexcom met Share</h3>
+        <p>Een Dexcom CGM (G6/G7/ONE) met <strong>Share aan</strong> en minstens één volger in de app.
+        Het display logt in met je gewone Dexcom-account.</p></div>
+      <div class="card"><h3>🔊 Optioneel</h3>
+        <ul><li>Speakertje 8Ω/2W (JST 1.25) voor alarmen</li>
+        <li>LiPo-accu (103450) voor snoerloos — spanning en percentage worden uitgelezen</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Flash je board — vanuit je browser</h2>
+    <div class="flashbox">
+      <p>Board via USB-C aan je computer, Chrome of Edge, klik Install, kies de seriële poort. Klaar in
+         een halve minuut. Daarna doet het scherm zelf de rest.</p>
+      <esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+    </div>
+    <ol class="steps">
+      <li><strong>Disclaimer</strong> lezen en accepteren op het scherm</li>
+      <li><strong>WiFi kiezen</strong> uit de lijst en wachtwoord typen (on-screen keyboard)</li>
+      <li><strong>Dexcom-login</strong> invoeren (server staat op EU; VS is een tikje)</li>
+      <li>Klaar — binnen een minuut staat de eerste waarde groot in beeld</li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Wat het allemaal kan</h2>
+    <div class="cards">
+      <div class="card"><h3>📊 Dagoverzicht</h3><p>Tik op de grafiek: tijd-in-bereik-balk, gemiddelde,
+        laagste/hoogste en het aantal lows over 24 uur. Grafiekvenster: 3/6/12/24 uur.</p></div>
+      <div class="card"><h3>🔔 Wekker-waardige alarmen</h3><p>Laag, hoog, snel-dalend en geen-data.
+        Herhaalt tot je tikt (aantal instelbaar), drie geluidsstijlen, hoog-alarm optioneel stil
+        's nachts. Testmenu om alles vooraf te horen.</p></div>
+      <div class="card"><h3>🌙 Nachtvriendelijk</h3><p>Instelbaar nachtvenster: dimmen of een amber
+        nachtklok. 's Ochtends een goedemorgen-groet met je nachtbereik.</p></div>
+      <div class="card"><h3>🎨 Persoonlijk</h3><p>Naam op het display (sierlijk schrift met hartje of
+        strakke blokletters) en zes kleurthema's die overal doorwerken.</p></div>
+      <div class="card"><h3>📱 Webinterface</h3><p>Waarde bekijken en alle instellingen aanpassen via
+        de browser op je telefoon — beveiligd met een wachtwoord dat alleen op het scherm van het
+        apparaat staat.</p></div>
+      <div class="card"><h3>🔋 Accubeheer</h3><p>Percentage en laadstatus in beeld; op accu dimt het
+        scherm automatisch naar een zuinig (instelbaar) niveau.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Privacy & veiligheid</h2>
+    <div class="cards">
+      <div class="card"><h3>🔐 Jouw gegevens</h3><p>Je Dexcom- en WiFi-login worden alleen op het
+        apparaat zelf opgeslagen en zijn via het netwerk niet leesbaar of wijzigbaar. Het apparaat
+        praat uitsluitend versleuteld (TLS) met Dexcom — er is geen andere cloud, geen telemetrie,
+        geen account bij ons.</p></div>
+      <div class="card"><h3>🛡️ Webinterface</h3><p>Afgeschermd met een apparaat-gegenereerd wachtwoord
+        (HTTP Basic Auth), beveiligd tegen DNS-rebinding en cross-site posts. Bedoeld voor je eigen
+        thuisnetwerk; zet het apparaat niet open naar internet.</p></div>
+      <div class="card"><h3>📖 Open source</h3><p>Alle code is <a
+        href="https://github.com/dimitrihilverda/glucose-display">openbaar op GitHub</a> (MIT).
+        Controleer het zelf, bouw het zelf, verbeter het — pull requests welkom.</p></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>Met liefde gebouwd door Dimitri &amp; Claude · dank aan de DIY-diabetes-community
+       (pydexcom, xDrip+) voor de Share-route.</p>
+    <p>Dexcom is een merk van Dexcom, Inc. Dit project is er niet aan verbonden.</p>
+  </div>
+</footer>
+
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+</body>
+</html>

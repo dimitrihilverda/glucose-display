@@ -609,14 +609,14 @@ static void screen_credits() {
     char bl[48];
     snprintf(bl, sizeof(bl), "accu: %d%% (%.2fV)%s", bat_pct, bat_volt,
              bat_full ? " vol" : (bat_charging ? " opladen" : ""));
-    display_centred(bl, 388, 1, TH_DIM);
+    display_centred(bl, 398, 1, TH_DIM);
   }
   char ip[48];
   snprintf(ip, sizeof(ip), "op je telefoon: http://%s", WiFi.localIP().toString().c_str());
-  display_centred(ip, 358, 1, TH_ACCENT);
+  display_centred(ip, 350, 1, TH_ACCENT);
   snprintf(ip, sizeof(ip), "web-login: display / %s", cfg.web_pass);
-  display_centred(ip, 382, 1, TH_TEXT);
-  btn(60, 410, 200, 48, "terug", true);
+  display_centred(ip, 374, 1, TH_TEXT);
+  btn(60, 428, 200, 46, "terug", true);
   gfx->flush();
   wait_tap();
   beep_click(cfg.volume);
@@ -678,7 +678,7 @@ static void screen_settings_system() {
     btn(4, 116, 312, 46, "dexcom-login wijzigen", false);
     btn(4, 170, 312, 46, "wifi wijzigen", false);
     btn(4, 224, 312, 46, "testen...", false);
-    btn(4, 278, 312, 46, "web-wachtwoord vernieuwen", false);
+    btn(4, 278, 312, 46, "nieuw web-wachtwoord", false);
     btn(4, 332, 312, 46, "over dit display", false);
     btn(4, 420, 312, 46, "terug", true);
     gfx->flush();

@@ -44,13 +44,26 @@ static void beep_tone(float freq, int ms, int volume_pct) {
 
 static void beep_click(int vol)  { beep_tone(1800, 15, vol); }
 static void beep_ok(int vol)     { beep_tone(659, 70, vol); beep_tone(880, 90, vol); }
-// Alarms follow the medical-device idiom: low = urgent descending triple,
-// high = calm double. Distinct by pattern, not just pitch.
+// Alarms follow the medical-device idiom: low = urgent descending, high =
+// calmer. Three styles (cfg.alarm_style): 0 zacht, 1 klassiek, 2 fel.
 static void beep_alarm_low(int vol) {
-  for (int i = 0; i < 3; i++) { beep_tone(740, 180, vol); beep_tone(587, 180, vol); delay(80); }
+  switch (cfg.alarm_style) {
+    case 0:
+      for (int i = 0; i < 2; i++) { beep_tone(587, 220, vol); beep_tone(494, 280, vol); delay(160); }
+      break;
+    case 2:
+      for (int i = 0; i < 4; i++) { beep_tone(830, 120, vol); beep_tone(659, 120, vol); delay(40); }
+      break;
+    default:
+      for (int i = 0; i < 3; i++) { beep_tone(740, 180, vol); beep_tone(587, 180, vol); delay(80); }
+  }
 }
 static void beep_alarm_high(int vol) {
-  beep_tone(880, 160, vol); delay(90); beep_tone(880, 160, vol);
+  switch (cfg.alarm_style) {
+    case 0: beep_tone(784, 220, vol); break;
+    case 2: for (int i = 0; i < 3; i++) { beep_tone(988, 120, vol); delay(60); } break;
+    default: beep_tone(880, 160, vol); delay(90); beep_tone(880, 160, vol);
+  }
 }
 // Fast drop: two quick descending pairs -- urgent but distinct from LOW.
 static void beep_fastdrop(int vol) {

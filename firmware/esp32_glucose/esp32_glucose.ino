@@ -7,7 +7,7 @@
 // NOT A MEDICAL DEVICE. Readings arrive via Dexcom Share with the usual
 // 5-minute cadence; treatment decisions belong on the official Dexcom app.
 
-#define FW_VERSION "1.3"
+#define FW_VERSION "1.4"
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -41,7 +41,9 @@ static bool is_night() {
   time_t nw = time(nullptr);
   struct tm tmnow;
   localtime_r(&nw, &tmnow);
-  return tmnow.tm_hour >= 22 || tmnow.tm_hour < 7;
+  int h = tmnow.tm_hour, s = cfg.night_start, e = cfg.night_end;
+  if (s == e) return false;
+  return s < e ? (h >= s && h < e) : (h >= s || h < e);
 }
 
 // True while the newest (non-stale) reading sits outside the target range.
@@ -604,46 +606,138 @@ static void screen_credits() {
              bat_full ? " (vol)" : (bat_charging ? " (opladen)" : ""));
     display_centred(bl, 388, 1, TH_DIM);
   }
-  char ip[40];
+  char ip[48];
   snprintf(ip, sizeof(ip), "op je telefoon: http://%s", WiFi.localIP().toString().c_str());
-  display_centred(ip, 366, 1, TH_ACCENT);
+  display_centred(ip, 358, 1, TH_ACCENT);
+  snprintf(ip, sizeof(ip), "web-login: display / %s", cfg.web_pass);
+  display_centred(ip, 382, 1, TH_TEXT);
   btn(60, 410, 200, 48, "terug", true);
   gfx->flush();
   wait_tap();
   beep_click(cfg.volume);
 }
 
+// ---- test menu -----------------------------------------------------------------------
+// Hear every sound and preview the special screens without waiting for the
+// real thing to happen.
+static void screen_test() {
+  for (;;) {
+    gfx->fillScreen(TH_BG);
+    display_header("testen");
+    btn(4, 62, 152, 52, "klik", false);
+    btn(164, 62, 152, 52, "chime", false);
+    btn(4, 122, 152, 52, "laag alarm", false);
+    btn(164, 122, 152, 52, "hoog alarm", false);
+    btn(4, 182, 152, 52, "snel-dalend", false);
+    btn(164, 182, 152, 52, "geen-data", false);
+    btn(4, 258, 312, 48, "nachtklok bekijken", false);
+    btn(4, 314, 312, 48, "goedemorgen bekijken", false);
+    btn(4, 412, 312, 48, "terug", true);
+    gfx->flush();
+    wait_tap();
+    if (in(4, 62, 152, 52)) beep_click(cfg.volume);
+    else if (in(164, 62, 152, 52)) beep_ok(cfg.volume);
+    else if (in(4, 122, 152, 52)) beep_alarm_low(cfg.volume);
+    else if (in(164, 122, 152, 52)) beep_alarm_high(cfg.volume);
+    else if (in(4, 182, 152, 52)) beep_fastdrop(cfg.volume);
+    else if (in(164, 182, 152, 52)) beep_nodata(cfg.volume);
+    else if (in(4, 258, 312, 48)) {
+      beep_click(cfg.volume);
+      draw_night();
+      display_backlight(cfg.dim_pct);   // exactly as it looks at night
+      wait_tap();
+      display_backlight(100);
+    }
+    else if (in(4, 314, 312, 48)) { beep_click(cfg.volume); screen_greeting(); }
+    else if (in(4, 412, 312, 48)) { beep_click(cfg.volume); return; }
+  }
+}
+
+// Generate a fresh web password: short, unambiguous, shown only on the
+// device's credits screen.
+static void web_pass_generate() {
+  static const char CS[] = "abcdefghjkmnpqrstuvwxyz23456789";
+  for (int i = 0; i < 6; i++)
+    cfg.web_pass[i] = CS[esp_random() % (sizeof(CS) - 1)];
+  cfg.web_pass[6] = '\0';
+  config_save();
+}
+
 // ---- settings (two pages) -------------------------------------------------------------------
+// Page 3: account, tests and the web password.
+static void screen_settings_system() {
+  for (;;) {
+    gfx->fillScreen(TH_BG);
+    display_header("systeem");
+    btn(4, 62, 312, 46, "naam wijzigen", false);
+    btn(4, 116, 312, 46, "dexcom-login wijzigen", false);
+    btn(4, 170, 312, 46, "wifi wijzigen", false);
+    btn(4, 224, 312, 46, "testen...", false);
+    btn(4, 278, 312, 46, "web-wachtwoord vernieuwen", false);
+    btn(4, 332, 312, 46, "over dit display", false);
+    btn(4, 420, 312, 46, "terug", true);
+    gfx->flush();
+    wait_tap();
+    beep_click(cfg.volume);
+    if (in(4, 62, 312, 46)) {
+      kb_input("naam op het display:", cfg.display_name, sizeof(cfg.display_name), false);
+      if (cfg.display_name[0] == '\0') strcpy(cfg.display_name, "Chantie");
+    }
+    else if (in(4, 116, 312, 46)) { config_save(); screen_dex_login(); }
+    else if (in(4, 170, 312, 46)) { config_save(); screen_wifi_setup(); }
+    else if (in(4, 224, 312, 46)) screen_test();
+    else if (in(4, 278, 312, 46)) { web_pass_generate(); screen_credits(); }
+    else if (in(4, 332, 312, 46)) screen_credits();
+    else if (in(4, 420, 312, 46)) { config_save(); return; }
+    config_save();
+  }
+}
+
 static void screen_settings_more() {
   for (;;) {
     gfx->fillScreen(TH_BG);
     display_header("meer");
     char b[40];
     snprintf(b, sizeof(b), "snel-dalend alarm: %s", cfg.alarm_fast ? "aan" : "uit");
-    btn(4, 62, 312, 44, b, cfg.alarm_fast);
+    btn(4, 60, 312, 42, b, cfg.alarm_fast);
     snprintf(b, sizeof(b), "geen-data alarm: %s", cfg.alarm_nodata ? "aan" : "uit");
-    btn(4, 114, 312, 44, b, cfg.alarm_nodata);
+    btn(4, 108, 312, 42, b, cfg.alarm_nodata);
     snprintf(b, sizeof(b), "hoog stil 's nachts: %s", cfg.quiet_high_night ? "aan" : "uit");
-    btn(4, 166, 312, 44, b, cfg.quiet_high_night);
-    btn(4, 226, 312, 44, "naam wijzigen", false);
-    btn(4, 278, 312, 44, "dexcom-login wijzigen", false);
-    btn(4, 330, 312, 44, "wifi wijzigen", false);
-    btn(4, 382, 312, 44, "over dit display", false);
-    btn(4, 432, 312, 44, "terug", true);
+    btn(4, 156, 312, 42, b, cfg.quiet_high_night);
+    static const char *ASTYLES[3] = {"zacht", "klassiek", "fel"};
+    snprintf(b, sizeof(b), "alarmgeluid: %s", ASTYLES[cfg.alarm_style % 3]);
+    btn(4, 204, 312, 42, b, false);
+    // night window hours with -/+
+    snprintf(b, sizeof(b), "nacht start  %02u:00", cfg.night_start);
+    gfx->fillRoundRect(4, 252, 224, 42, 8, TH_PANEL);
+    font_med(); gfx->setTextColor(TH_TEXT);
+    gfx->setCursor(14, 252 + 29); gfx->print(b);
+    btn(232, 252, 40, 42, "-", false);
+    btn(276, 252, 40, 42, "+", false);
+    snprintf(b, sizeof(b), "nacht eind   %02u:00", cfg.night_end);
+    gfx->fillRoundRect(4, 300, 224, 42, 8, TH_PANEL);
+    gfx->setTextColor(TH_TEXT);
+    gfx->setCursor(14, 300 + 29); gfx->print(b);
+    btn(232, 300, 40, 42, "-", false);
+    btn(276, 300, 40, 42, "+", false);
+    btn(4, 366, 312, 44, "systeem & testen...", false);
+    btn(4, 424, 312, 44, "terug", true);
     gfx->flush();
     wait_tap();
     beep_click(cfg.volume);
-    if (in(4, 62, 312, 44)) cfg.alarm_fast = !cfg.alarm_fast;
-    else if (in(4, 114, 312, 44)) cfg.alarm_nodata = !cfg.alarm_nodata;
-    else if (in(4, 166, 312, 44)) cfg.quiet_high_night = !cfg.quiet_high_night;
-    else if (in(4, 226, 312, 44)) {
-      kb_input("naam op het display:", cfg.display_name, sizeof(cfg.display_name), false);
-      if (cfg.display_name[0] == '\0') strcpy(cfg.display_name, "Chantie");
+    if (in(4, 60, 312, 42)) cfg.alarm_fast = !cfg.alarm_fast;
+    else if (in(4, 108, 312, 42)) cfg.alarm_nodata = !cfg.alarm_nodata;
+    else if (in(4, 156, 312, 42)) cfg.quiet_high_night = !cfg.quiet_high_night;
+    else if (in(4, 204, 312, 42)) {
+      cfg.alarm_style = (cfg.alarm_style + 1) % 3;
+      beep_alarm_high(cfg.volume);            // instant preview
     }
-    else if (in(4, 278, 312, 44)) { config_save(); screen_dex_login(); }
-    else if (in(4, 330, 312, 44)) { config_save(); screen_wifi_setup(); }
-    else if (in(4, 382, 312, 44)) screen_credits();
-    else if (in(4, 432, 312, 44)) { config_save(); return; }
+    else if (in(232, 252, 40, 42)) cfg.night_start = (cfg.night_start + 23) % 24;
+    else if (in(276, 252, 40, 42)) cfg.night_start = (cfg.night_start + 1) % 24;
+    else if (in(232, 300, 40, 42)) cfg.night_end = (cfg.night_end + 23) % 24;
+    else if (in(276, 300, 40, 42)) cfg.night_end = (cfg.night_end + 1) % 24;
+    else if (in(4, 366, 312, 44)) { config_save(); screen_settings_system(); }
+    else if (in(4, 424, 312, 44)) { config_save(); return; }
     config_save();
   }
 }
@@ -673,9 +767,11 @@ static void screen_settings() {
     }
     snprintf(b, sizeof(b), "alarmen: %s", cfg.alarms_on ? "aan" : "uit");
     btn(4, 54 + 6 * 40, 312, 36, b, cfg.alarms_on);
-    const char *nm = cfg.night_mode == 0 ? "nacht: uit"
-                   : cfg.night_mode == 1 ? "nacht: dimmen (22-07)"
-                                         : "nacht: klok (22-07)";
+    char nm[36];
+    if (cfg.night_mode == 0) snprintf(nm, sizeof(nm), "nacht: uit");
+    else snprintf(nm, sizeof(nm), "nacht: %s (%02u-%02u)",
+                  cfg.night_mode == 1 ? "dimmen" : "klok",
+                  cfg.night_start, cfg.night_end);
     btn(4, 54 + 7 * 40, 312, 36, nm, cfg.night_mode > 0);
     btn(4, 54 + 8 * 40, 312, 36, "meer opties...", false);
     btn(4, 54 + 9 * 40, 312, 36, "terug", true);
@@ -749,6 +845,36 @@ static void handle_alarms() {
   }
 }
 
+// ---- web security -------------------------------------------------------------------------
+// Everything behind HTTP basic auth (user "display", device-generated
+// password, shown only on the credits screen). The Host check blocks DNS
+// rebinding; the Origin check on saves blocks cross-site posts. Credentials
+// for WiFi/Dexcom are never readable or writable over the web at all.
+static bool web_guard() {
+  String host = web.hostHeader();
+  String ip = WiFi.localIP().toString();
+  if (host.length() && !host.startsWith(ip)) {
+    web.send(403, "text/plain", "verkeerde host");
+    return false;
+  }
+  if (!web.authenticate("display", cfg.web_pass)) {
+    delay(400);                       // slow down guessing
+    web.requestAuthentication(BASIC_AUTH, "glucose-display");
+    return false;
+  }
+  return true;
+}
+
+static bool web_guard_post() {
+  if (!web_guard()) return false;
+  String o = web.header("Origin");
+  if (o.length() && o.indexOf(WiFi.localIP().toString()) < 0) {
+    web.send(403, "text/plain", "verkeerde herkomst");
+    return false;
+  }
+  return true;
+}
+
 // ---- web status page --------------------------------------------------------------------
 static const char *trend_arrow_txt(int8_t t) {
   switch (t) {
@@ -760,6 +886,7 @@ static const char *trend_arrow_txt(int8_t t) {
 }
 
 static void web_root() {
+  if (!web_guard()) return;
   String h = "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
     "<meta http-equiv='refresh' content='60'>"
@@ -794,6 +921,7 @@ static void web_root() {
 }
 
 static void web_api() {
+  if (!web_guard()) return;
   String j = "{";
   if (hist_n > 0) {
     j += "\"mgdl\":" + String(hist[0].mgdl);
@@ -812,6 +940,7 @@ static void web_api() {
 static void render();                    // defined below, used after a save
 
 static void web_settings_form() {
+  if (!web_guard()) return;
   String h = "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
     "<title>instellingen</title><style>"
@@ -833,7 +962,14 @@ static void web_settings_form() {
   h += "<label>hoog alarm (mmol/L)</label><input name='high' type='number' step='0.1' min='7' max='20' value='" + String(cfg.high_mmol, 1) + "'>";
   h += "<label>volume: " + String(cfg.volume) + "%</label><input name='vol' type='range' min='10' max='100' step='10' value='" + String(cfg.volume) + "'>";
   h += "<label>nachtdim-niveau: " + String(cfg.dim_pct) + "%</label><input name='dim' type='range' min='5' max='60' step='5' value='" + String(cfg.dim_pct) + "'>";
-  h += "<label>nachtmodus (22:00-07:00)</label><select name='night'>";
+  h += "<label>alarmgeluid</label><select name='astyle'>";
+  const char *asty[3] = {"zacht", "klassiek", "fel"};
+  for (int i = 0; i < 3; i++)
+    h += "<option value='" + String(i) + "'" + (cfg.alarm_style == i ? " selected" : "") + ">" + asty[i] + "</option>";
+  h += "</select>";
+  h += "<label>nacht van (uur)</label><input name='nstart' type='number' min='0' max='23' value='" + String(cfg.night_start) + "'>";
+  h += "<label>nacht tot (uur)</label><input name='nend' type='number' min='0' max='23' value='" + String(cfg.night_end) + "'>";
+  h += "<label>nachtmodus</label><select name='night'>";
   const char *nopts[3] = {"uit", "dimmen", "amber klok"};
   for (int i = 0; i < 3; i++)
     h += "<option value='" + String(i) + "'" + (cfg.night_mode == i ? " selected" : "") + ">" + nopts[i] + "</option>";
@@ -859,6 +995,7 @@ static void web_settings_form() {
 }
 
 static void web_settings_save() {
+  if (!web_guard_post()) return;
   if (web.hasArg("name")) {
     // keep only characters the script font can draw
     char nm[25]; int k = 0;
@@ -876,6 +1013,9 @@ static void web_settings_save() {
   if (web.hasArg("vol"))  cfg.volume    = constrain(web.arg("vol").toInt(), 10, 100);
   if (web.hasArg("dim"))  cfg.dim_pct   = constrain(web.arg("dim").toInt(), 5, 60);
   if (web.hasArg("night")) cfg.night_mode = constrain(web.arg("night").toInt(), 0, 2);
+  if (web.hasArg("astyle")) cfg.alarm_style = constrain(web.arg("astyle").toInt(), 0, 2);
+  if (web.hasArg("nstart")) cfg.night_start = constrain(web.arg("nstart").toInt(), 0, 23);
+  if (web.hasArg("nend"))   cfg.night_end   = constrain(web.arg("nend").toInt(), 0, 23);
   if (web.hasArg("theme")) cfg.theme = constrain(web.arg("theme").toInt(), 0, THEME_COUNT - 1);
   if (web.hasArg("ghours")) {
     int g = web.arg("ghours").toInt();
@@ -927,6 +1067,9 @@ void setup() {
   if (cfg.dex_user[0] == '\0') screen_dex_login();
   dex_ok = true;
 
+  if (cfg.web_pass[0] == '\0') web_pass_generate();
+  static const char *want[] = { "Origin" };
+  web.collectHeaders(want, 1);
   web.on("/", web_root);
   web.on("/api", web_api);
   web.on("/instellingen", HTTP_GET, web_settings_form);

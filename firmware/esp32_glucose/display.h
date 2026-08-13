@@ -11,7 +11,7 @@
 #define TH_BG      0x10C4   // #101820 near-black blue
 #define TH_PANEL   0x322B   // #33475B slate
 #define TH_TEXT    0xFFFF
-#define TH_ACCENT  0xC6A0   // #C3D400 lime
+#define TH_ACCENT  0xE2B0   // #E75480 pink -- the house colour now
 #define TH_DIM     0x9515   // #90A0AC secondary text
 
 #define QSPI_BL   1
@@ -47,6 +47,10 @@
 #define DX_BAND  0xE73D         // target-range band
 #define DX_YEL   0xFE60         // high line / high circle
 #define DX_RED   0xF9C6         // low line / low circle
+#define DX_PINK  0xE2B0         // the owner's name
+#define DX_PINKD 0xC18C         // heart
+#define DX_GREEN 0x362B         // in-range share of the TIR bar
+#define NT_AMBER 0xFD80         // night clock digits on black
 
 static Arduino_DataBus *qspi_bus =
     new Arduino_ESP32QSPI(QSPI_CS, QSPI_SCK, QSPI_D0, QSPI_D1, QSPI_D2, QSPI_D3);
@@ -79,28 +83,42 @@ static bool display_begin() {
 // draw from the BASELINE and ignore the background colour, so callers paint
 // their own background and pass a baseline y.
 #include "fonts.h"
-#include "chantie_logo.h"
 static void font_big()    { gfx->setFont(&GlucoseBig); gfx->setTextSize(1); }
 static void font_med()    { gfx->setFont(&UiMed);      gfx->setTextSize(1); }
 static void font_small()  { gfx->setFont(&UiSmall);    gfx->setTextSize(1); }
 static void font_px(int s){ gfx->setFont((const GFXfont *)nullptr); gfx->setTextSize(s); }
+static void font_script(){ gfx->setFont(&NameScript);  gfx->setTextSize(1); }
 static int text_w(const char *s) {
   int16_t x1, y1; uint16_t w, h;
   gfx->getTextBounds((char *)s, 0, 100, &x1, &y1, &w, &h);
   return (int)w;
 }
 
-// Header for the setup screens: this is Chantie's device, so it says so.
+// A little heart, drawn from primitives so it works at any size and colour.
+static void draw_heart(int cx, int cy, int s, uint16_t color) {
+  gfx->fillTriangle(cx - s, cy, cx + s, cy, cx, cy + (s * 13) / 10, color);
+  gfx->fillCircle(cx - s / 2, cy - s / 3, (s + 1) / 2 + 1, color);
+  gfx->fillCircle(cx + s / 2, cy - s / 3, (s + 1) / 2 + 1, color);
+}
+
+// The owner's name in script with a heart; returns nothing, draws at a
+// baseline. Works on both the dark and the light theme.
+static void draw_name(int x, int baseline, uint16_t color, uint16_t heart) {
+  font_script();
+  gfx->setTextColor(color);
+  gfx->setCursor(x, baseline);
+  gfx->print(cfg.display_name);
+  draw_heart(x + text_w(cfg.display_name) + 16, baseline - 12, 8, heart);
+}
+
+// Header for the setup screens: the owner's name in script, pink.
 static void display_header(const char *label) {
-  font_med();
-  gfx->setTextColor(TH_ACCENT);
-  gfx->setCursor(MARGIN + 4, 34);
-  gfx->print("Chantie");
+  draw_name(MARGIN + 6, 40, TH_ACCENT, TH_ACCENT);
   font_small();
   gfx->setTextColor(TH_DIM);
   gfx->setCursor(SCR_W - MARGIN - text_w(label), 30);
   gfx->print(label);
-  gfx->drawFastHLine(0, 49, SCR_W, TH_ACCENT);
+  gfx->drawFastHLine(0, 52, SCR_W, TH_ACCENT);
 }
 
 // Legacy-shaped helper: y is still the old top-ish coordinate; size 1 maps to

@@ -52,5 +52,15 @@ static void beep_alarm_low(int vol) {
 static void beep_alarm_high(int vol) {
   beep_tone(880, 160, vol); delay(90); beep_tone(880, 160, vol);
 }
+// Fast drop: two quick descending pairs -- urgent but distinct from LOW.
+static void beep_fastdrop(int vol) {
+  beep_tone(988, 110, vol); beep_tone(740, 140, vol);
+  delay(120);
+  beep_tone(988, 110, vol); beep_tone(740, 140, vol);
+}
+// No data: two soft low blips, more "hey" than "help".
+static void beep_nodata(int vol) {
+  beep_tone(440, 120, vol * 2 / 3); delay(150); beep_tone(440, 120, vol * 2 / 3);
+}
 
 #endif

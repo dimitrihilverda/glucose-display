@@ -8,13 +8,17 @@ Usage: edit FONTS below and run; writes the header to stdout target path.
 """
 from PIL import Image, ImageDraw, ImageFont
 
+import string
 FONTS = [
     # (name, ttf, px, charset)
     ("GlucoseBig", r"C:\Windows\Fonts\segoeuib.ttf", 76, "0123456789.,"),
     ("UiMed",      r"C:\Windows\Fonts\segoeuib.ttf", 26, None),   # None = ASCII 32..126
     ("UiSmall",    r"C:\Windows\Fonts\segoeui.ttf",  17, None),
+    # the owner's name renders in script at runtime, whatever it is
+    ("NameScript", r"C:\Windows\Fonts\segoescb.ttf", 38, " " + string.ascii_letters),
 ]
-OUT = r"C:\Users\dimx\Claude\llm on s3 touchscreen\esp32-ai\firmware\esp32_glucose\fonts.h"
+import os
+OUT = os.path.join(os.path.dirname(__file__), "..", "firmware", "esp32_glucose", "fonts.h")
 
 
 def build_font(name, path, px, charset):

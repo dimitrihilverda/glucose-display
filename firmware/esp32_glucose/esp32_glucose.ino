@@ -1,11 +1,16 @@
-// Glucose kiosk for the Guition JC3248W535C: a native Dexcom Share client.
-// Big current value with trend arrow, six-hour sparkline, speaker alarms on
-// lows/highs, on-screen WiFi setup and Dexcom login, settings in NVS.
+// Glucose display for the Guition JC3248W535C: a native Dexcom Share client.
+// Dexcom-app-style value circle with trend arrow, adjustable-window graph,
+// day statistics, speaker alarms (low / high / fast-drop / no-data), night
+// dim or amber night clock, morning greeting, on-screen WiFi and account
+// setup, a read-only status page over HTTP, all settings in NVS.
 //
 // NOT A MEDICAL DEVICE. Readings arrive via Dexcom Share with the usual
 // 5-minute cadence; treatment decisions belong on the official Dexcom app.
 
+#define FW_VERSION "1.2"
+
 #include <WiFi.h>
+#include <WebServer.h>
 #include <time.h>
 #include "config.h"
 #include "display.h"
@@ -13,19 +18,39 @@
 #include "beeps.h"
 #include "keyboard2.h"
 #include "dexcom.h"
+#include "battery.h"
 
 // ---- state ------------------------------------------------------------------
-#define HIST_MAX 72                    // 6 hours of 5-minute readings
+#define HIST_MAX 288                   // 24 hours of 5-minute readings
 static Egv hist[HIST_MAX];
 static int hist_n = 0;
 static uint32_t last_fetch_ms = 0;
 static uint32_t last_draw_ms = 0;
 static time_t last_alarm_t = 0;        // reading timestamp we last alarmed on
+static uint32_t last_nodata_ms = 0;
 static uint32_t snooze_until_ms = 0;
+static uint32_t wake_until_ms = 0;
+static int greeted_yday = -1;          // tm_yday of the last morning greeting
 static bool net_ok = false, dex_ok = false;
+static WebServer web(80);
 
 static float to_mmol(int mgdl) { return mgdl / 18.016f; }
 static float shown_value(int mgdl) { return cfg.use_mmol ? to_mmol(mgdl) : (float)mgdl; }
+
+static bool is_night() {
+  time_t nw = time(nullptr);
+  struct tm tmnow;
+  localtime_r(&nw, &tmnow);
+  return tmnow.tm_hour >= 22 || tmnow.tm_hour < 7;
+}
+
+// True while the newest (non-stale) reading sits outside the target range.
+static bool out_of_range_now() {
+  if (hist_n == 0) return false;
+  if (time(nullptr) - hist[0].t > 12 * 60) return false;
+  float v = to_mmol(hist[0].mgdl);
+  return v < cfg.low_mmol || v > cfg.high_mmol;
+}
 
 // ---- small ui helpers ---------------------------------------------------------
 static void btn(int x, int y, int w, int h, const char *label, bool accent) {
@@ -38,10 +63,19 @@ static void btn(int x, int y, int w, int h, const char *label, bool accent) {
 static bool in(int x, int y, int w, int h) {
   return touch_sx >= x && touch_sx < x + w && touch_sy >= y && touch_sy < y + h;
 }
-// Wait (blocking) for a debounced tap; returns when one landed.
 static void wait_tap() {
   touch_irq = false;
   for (;;) { delay(20); if (touch_tapped()) return; }
+}
+// Like wait_tap but gives up after ms; returns true when tapped.
+static bool wait_tap_for(uint32_t ms) {
+  touch_irq = false;
+  uint32_t until = millis() + ms;
+  while (millis() < until) {
+    delay(20);
+    if (touch_tapped()) return true;
+  }
+  return false;
 }
 
 // ---- disclaimer ---------------------------------------------------------------
@@ -93,10 +127,8 @@ static void screen_wifi_setup() {
     display_header("wifi");
     display_centred("netwerken zoeken...", 150, 2, TH_DIM);
     gfx->flush();
-    // A scan fails (returns a negative code) while the station is still
-    // trying to reach a stored network, and after a failed connect it keeps
-    // retrying in the background. Stop it first, then bring the radio back
-    // up idle so the scan actually runs.
+    // A scan fails (negative code) while the station is still retrying a
+    // stored network. Stop it, settle, then scan.
     WiFi.disconnect(true);
     delay(200);
     WiFi.mode(WIFI_STA);
@@ -121,7 +153,6 @@ static void screen_wifi_setup() {
       char nm[19];
       strncpy(nm, WiFi.SSID(i).c_str(), 18); nm[18] = '\0';
       gfx->print(nm);
-      // signal bars
       int bars = map(constrain(WiFi.RSSI(i), -90, -40), -90, -40, 1, 4);
       for (int b = 0; b < 4; b++)
         gfx->fillRect(272 + b * 9, y + 26 - b * 5, 6, 5 + b * 5,
@@ -207,9 +238,8 @@ static void screen_dex_login() {
   }
 }
 
-// ---- main screen -----------------------------------------------------------------
+// ---- trend arrow ------------------------------------------------------------------
 static void draw_trend_arrow(int cx, int cy, int8_t trend, uint16_t color) {
-  // trend: 1 up-up, 2 up, 3 45up, 4 flat, 5 45down, 6 down, 7 down-down
   float ang;
   switch (trend) {
     case 1: case 2: ang = -90; break;
@@ -240,26 +270,18 @@ static void draw_trend_arrow(int cx, int cy, int8_t trend, uint16_t color) {
   }
 }
 
-static uint16_t value_color(int mgdl) {
-  float v = to_mmol(mgdl);
-  if (v < cfg.low_mmol) return GL_LOW;
-  if (v > cfg.high_mmol) return GL_HIGH;
-  return GL_OK;
-}
-
+// ---- main screen -----------------------------------------------------------------
 static void draw_main() {
-  // Dexcom-app look: light page, white value circle with the trend arrow at
-  // its side, then a white graph card with the target band and hour axis.
   gfx->fillScreen(DX_BG);
   time_t now = time(nullptr);
 
-  // Chantie's wordmark, top-left with a little breathing room
-  gfx->draw16bitRGBBitmap(12, 10, (uint16_t *)CHANTIE_LOGO,
-                          CHANTIE_LOGO_W, CHANTIE_LOGO_H);
+  // the owner's name, script + heart, top-left; battery top-right
+  draw_name(12, 44, DX_PINK, DX_PINKD);
+  battery_draw(SCR_W - 42, 12, DX_GRAY, DX_RED);
   if (!net_ok) {
     font_small();
     gfx->setTextColor(DX_RED);
-    gfx->setCursor(SCR_W - text_w("geen wifi") - 6, 22);
+    gfx->setCursor(SCR_W - text_w("geen wifi") - 6, 48);
     gfx->print("geen wifi");
   }
 
@@ -307,40 +329,38 @@ static void draw_main() {
   gfx->setCursor(ccx - text_w(unit) / 2, ccy + 62);
   gfx->print(unit);
 
-  // trend arrow at the circle's right, app-style
   draw_trend_arrow(ccx + R + 42, ccy, stale ? -1 : cur.trend, DX_TEXT);
 
-  // age, small and quiet; loud only when the data is old
   char sub[32];
   snprintf(sub, sizeof(sub), "%d min geleden", age_min);
-  if (stale) {
-    font_med();
-    gfx->setTextColor(DX_RED);
-  } else {
-    font_small();
-    gfx->setTextColor(DX_GRAY);
-  }
+  if (stale) { font_med(); gfx->setTextColor(DX_RED); }
+  else { font_small(); gfx->setTextColor(DX_GRAY); }
   gfx->setCursor((SCR_W - text_w(sub)) / 2, 278);
   gfx->print(sub);
 
-  // graph card, three-hour window like the app's default
+  // graph card, window per cfg.graph_hours; tap it for the day statistics
   const int cx0 = 8, cy0 = 288, cx1 = SCR_W - 8, cy1 = 472;
   gfx->fillRoundRect(cx0, cy0, cx1 - cx0, cy1 - cy0, 12, DX_CARD);
-  // "..." = settings, top-right of the card like the app
   font_med();
   gfx->setTextColor(DX_GRAY);
   gfx->setCursor(cx1 - 38, cy0 + 22);
   gfx->print("...");
+  font_small();
+  gfx->setTextColor(DX_GRAY);
+  char wt[8];
+  snprintf(wt, sizeof(wt), "%uu", cfg.graph_hours);
+  gfx->setCursor(cx0 + 10, cy0 + 20);
+  gfx->print(wt);
 
   const int gx0 = cx0 + 10, gx1 = cx1 - 48;
   const int gy0 = cy0 + 30, gy1 = cy1 - 24;
+  const int win_s = cfg.graph_hours * 3600;
   float vmin = cfg.use_mmol ? 2.0f : 36.0f, vmax = cfg.use_mmol ? 22.0f : 396.0f;
   auto yfor = [&](float v) {
     if (v < vmin) v = vmin;
     if (v > vmax) v = vmax;
     return gy1 - (int)((v - vmin) / (vmax - vmin) * (gy1 - gy0));
   };
-  // target band + threshold lines + right-axis labels
   int yl = yfor(cfg.low_mmol * (cfg.use_mmol ? 1.0f : 18.016f));
   int yh = yfor(cfg.high_mmol * (cfg.use_mmol ? 1.0f : 18.016f));
   gfx->fillRect(gx0, yh, gx1 - gx0, yl - yh, DX_BAND);
@@ -348,9 +368,6 @@ static void draw_main() {
   gfx->drawFastHLine(gx0, yl, gx1 - gx0, DX_RED);
   font_px(1);
   char lb[8];
-  gfx->setTextColor(DX_GRAY, DX_CARD);
-  snprintf(lb, sizeof(lb), "%.0f", cfg.use_mmol ? 22.0f : 396.0f);
-  gfx->setCursor(gx1 + 6, yfor(cfg.use_mmol ? 22.0f : 396.0f) + 2); gfx->print(lb);
   gfx->setTextColor(DX_YEL, DX_CARD);
   snprintf(lb, sizeof(lb), "%.1f", cfg.high_mmol);
   gfx->setCursor(gx1 + 6, yh - 3); gfx->print(lb);
@@ -358,13 +375,16 @@ static void draw_main() {
   snprintf(lb, sizeof(lb), "%.1f", cfg.low_mmol);
   gfx->setCursor(gx1 + 6, yl - 3); gfx->print(lb);
 
-  // hour ticks + "Nu"
-  time_t t0 = now - 3 * 3600;
+  // hour ticks + "Nu" (tick spacing grows with the window)
+  time_t t0 = now - win_s;
+  int tick_h = cfg.graph_hours <= 6 ? 1 : (cfg.graph_hours == 12 ? 3 : 6);
   gfx->setTextColor(DX_GRAY, DX_CARD);
   for (time_t ht = ((t0 / 3600) + 1) * 3600; ht < now; ht += 3600) {
-    int x = gx0 + (int)((float)(ht - t0) / (3 * 3600) * (gx1 - gx0));
     struct tm tmh;
     localtime_r(&ht, &tmh);
+    if (tmh.tm_hour % tick_h) continue;
+    int x = gx0 + (int)((float)(ht - t0) / win_s * (gx1 - gx0));
+    if (x > gx1 - 20) continue;
     snprintf(lb, sizeof(lb), "%d", tmh.tm_hour);
     gfx->setCursor(x - 3, gy1 + 8);
     gfx->print(lb);
@@ -372,16 +392,14 @@ static void draw_main() {
   gfx->setCursor(gx1 - 12, gy1 + 8);
   gfx->print("Nu");
 
-  // the dots, black like the app's
   for (int i = hist_n - 1; i >= 0; i--) {
     if (hist[i].t < t0) continue;
-    int x = gx0 + (int)((float)(hist[i].t - t0) / (3 * 3600) * (gx1 - gx0));
-    int y = yfor(shown_value(hist[i].mgdl) * (cfg.use_mmol ? 1.0f : 1.0f));
+    int x = gx0 + (int)((float)(hist[i].t - t0) / win_s * (gx1 - gx0));
+    int y = yfor(shown_value(hist[i].mgdl));
     gfx->fillCircle(x, y, 2, DX_TEXT);
   }
-  // ring the newest reading, like the app's open circle
-  if (hist_n > 0 && hist[0].t >= t0) {
-    int x = gx0 + (int)((float)(hist[0].t - t0) / (3 * 3600) * (gx1 - gx0));
+  if (hist[0].t >= t0) {
+    int x = gx0 + (int)((float)(hist[0].t - t0) / win_s * (gx1 - gx0));
     int y = yfor(shown_value(hist[0].mgdl));
     gfx->fillCircle(x, y, 4, DX_CARD);
     gfx->drawCircle(x, y, 4, DX_TEXT);
@@ -390,13 +408,251 @@ static void draw_main() {
   gfx->flush();
 }
 
-// ---- settings ----------------------------------------------------------------------
+// ---- night clock -------------------------------------------------------------------
+// Amber on black, nothing else: a bedside clock that happens to know glucose.
+static void draw_night() {
+  gfx->fillScreen(0x0000);
+  if (hist_n == 0) {
+    font_med();
+    gfx->setTextColor(NT_AMBER);
+    gfx->setCursor((SCR_W - text_w("geen data")) / 2, 240);
+    gfx->print("geen data");
+    gfx->flush();
+    return;
+  }
+  time_t now = time(nullptr);
+  const Egv &cur = hist[0];
+  bool stale = (now - cur.t) > 12 * 60;
+  char val[12];
+  if (cfg.use_mmol) snprintf(val, sizeof(val), "%.1f", to_mmol(cur.mgdl));
+  else snprintf(val, sizeof(val), "%d", cur.mgdl);
+  font_big();
+  gfx->setTextColor(NT_AMBER);
+  gfx->setCursor((SCR_W - text_w(val)) / 2, 220);
+  gfx->print(val);
+  draw_trend_arrow(SCR_W / 2, 290, stale ? -1 : cur.trend, NT_AMBER);
+  if (stale) {
+    font_small();
+    gfx->setTextColor(DX_RED);
+    gfx->setCursor((SCR_W - text_w("data is verouderd")) / 2, 350);
+    gfx->print("data is verouderd");
+  }
+  gfx->flush();
+}
+
+// ---- day statistics ------------------------------------------------------------------
+static void screen_stats() {
+  for (;;) {
+    time_t now = time(nullptr);
+    time_t t24 = now - 24 * 3600;
+    int n = 0, nlow = 0, nhigh = 0, low_events = 0;
+    float sum = 0, mn = 1e9f, mx = -1e9f;
+    bool was_low = false;
+    for (int i = hist_n - 1; i >= 0; i--) {   // oldest -> newest
+      if (hist[i].t < t24) continue;
+      float v = to_mmol(hist[i].mgdl);
+      n++; sum += v;
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+      bool lo = v < cfg.low_mmol;
+      if (lo && !was_low) low_events++;
+      was_low = lo;
+      if (lo) nlow++;
+      else if (v > cfg.high_mmol) nhigh++;
+    }
+    gfx->fillScreen(DX_BG);
+    draw_name(12, 44, DX_PINK, DX_PINKD);
+    font_med();
+    gfx->setTextColor(DX_GRAY);
+    gfx->setCursor(SCR_W - text_w("24 uur") - 8, 36);
+    gfx->print("24 uur");
+
+    if (n == 0) {
+      display_centred("nog geen data", 200, 2, DX_GRAY);
+    } else {
+      int pin = 100 * (n - nlow - nhigh) / n;
+      int plow = 100 * nlow / n;
+      int phigh = 100 - pin - plow;
+      // TIR bar: low red | in-range green | high yellow
+      const int bx = 16, bw = SCR_W - 32, by = 76, bh = 34;
+      int wlow = bw * plow / 100, whigh = bw * phigh / 100;
+      int win_ = bw - wlow - whigh;
+      gfx->fillRoundRect(bx, by, bw, bh, 8, DX_BAND);
+      if (wlow) gfx->fillRect(bx, by, wlow, bh, DX_RED);
+      if (win_) gfx->fillRect(bx + wlow, by, win_, bh, DX_GREEN);
+      if (whigh) gfx->fillRect(bx + wlow + win_, by, whigh, bh, DX_YEL);
+      font_small();
+      gfx->setTextColor(DX_GRAY);
+      gfx->setCursor(bx, by + bh + 20); gfx->print("laag");
+      gfx->setCursor(bx + bw / 2 - 20, by + bh + 20); gfx->print("in bereik");
+      gfx->setCursor(bx + bw - 30, by + bh + 20); gfx->print("hoog");
+      char pct[8];
+      font_med();
+      gfx->setTextColor(DX_TEXT);
+      snprintf(pct, sizeof(pct), "%d%%", plow);
+      gfx->setCursor(bx, by + bh + 48); gfx->print(pct);
+      snprintf(pct, sizeof(pct), "%d%%", pin);
+      gfx->setCursor(bx + bw / 2 - 20, by + bh + 48); gfx->print(pct);
+      snprintf(pct, sizeof(pct), "%d%%", phigh);
+      gfx->setCursor(bx + bw - 40, by + bh + 48); gfx->print(pct);
+
+      // stat rows
+      struct { const char *label; float v; } st[3] = {
+        { "gemiddeld", sum / n }, { "laagste", mn }, { "hoogste", mx },
+      };
+      for (int i = 0; i < 3; i++) {
+        int y = 190 + i * 52;
+        gfx->fillRoundRect(16, y, SCR_W - 32, 44, 10, DX_CARD);
+        font_med();
+        gfx->setTextColor(DX_GRAY);
+        gfx->setCursor(28, y + 30); gfx->print(st[i].label);
+        char v[16];
+        snprintf(v, sizeof(v), cfg.use_mmol ? "%.1f" : "%.0f",
+                 cfg.use_mmol ? st[i].v : st[i].v * 18.016f);
+        gfx->setTextColor(DX_TEXT);
+        gfx->setCursor(SCR_W - 28 - text_w(v), y + 30); gfx->print(v);
+      }
+      char le[36];
+      snprintf(le, sizeof(le), "%d keer laag geweest", low_events);
+      display_centred(le, 352, 1, low_events ? DX_RED : DX_GRAY);
+    }
+
+    char wb[24];
+    snprintf(wb, sizeof(wb), "grafiek: %u uur", cfg.graph_hours);
+    // dark buttons read fine on the light page too
+    btn(16, 396, 180, 44, wb, false);
+    btn(220, 396, 84, 44, "terug", true);
+    gfx->flush();
+    wait_tap();
+    beep_click(cfg.volume);
+    if (in(16, 396, 180, 44)) {
+      cfg.graph_hours = cfg.graph_hours == 3 ? 6 :
+                        cfg.graph_hours == 6 ? 12 :
+                        cfg.graph_hours == 12 ? 24 : 3;
+      config_save();
+      continue;
+    }
+    return;
+  }
+}
+
+// ---- morning greeting ------------------------------------------------------------------
+static void screen_greeting() {
+  time_t now = time(nullptr);
+  float mn = 1e9f, mx = -1e9f;
+  struct tm tmn;
+  localtime_r(&now, &tmn);
+  struct tm mid = tmn;
+  mid.tm_hour = 0; mid.tm_min = 0; mid.tm_sec = 0;
+  time_t midnight = mktime(&mid);
+  for (int i = 0; i < hist_n; i++) {
+    if (hist[i].t < midnight) continue;
+    float v = to_mmol(hist[i].mgdl);
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+  }
+  gfx->fillScreen(DX_BG);
+  font_med();
+  gfx->setTextColor(DX_GRAY);
+  gfx->setCursor((SCR_W - text_w("Goedemorgen")) / 2, 140);
+  gfx->print("Goedemorgen");
+  font_script();
+  gfx->setTextColor(DX_PINK);
+  gfx->setCursor((SCR_W - text_w(cfg.display_name)) / 2 - 10, 210);
+  gfx->print(cfg.display_name);
+  draw_heart(SCR_W / 2 + text_w(cfg.display_name) / 2 + 12, 198, 8, DX_PINKD);
+  if (mx > 0) {
+    char s[48];
+    snprintf(s, sizeof(s), "vannacht tussen %.1f en %.1f", mn, mx);
+    display_centred(s, 260, 2, DX_TEXT);
+  }
+  display_centred("fijne dag!", 310, 1, DX_GRAY);
+  gfx->flush();
+  wait_tap_for(30000);
+  touch_irq = false;
+}
+
+// ---- credits ------------------------------------------------------------------------------
+static void screen_credits() {
+  gfx->fillScreen(TH_BG);
+  draw_name((SCR_W - text_w(cfg.display_name)) / 2 - 10, 70, TH_ACCENT, TH_ACCENT);
+  display_centred("glucose-display", 92, 2, TH_TEXT);
+  char v[24];
+  snprintf(v, sizeof(v), "versie %s", FW_VERSION);
+  display_centred(v, 122, 1, TH_DIM);
+  font_small();
+  gfx->setTextColor(TH_DIM);
+  int y = 180;
+  const char *lines[] = {
+    "met liefde gebouwd door",
+    "Dimitri & Claude",
+    "",
+    "data: Dexcom Share",
+    "board: JC3248W535C (ESP32-S3)",
+    "",
+    "geen medisch hulpmiddel",
+  };
+  for (auto l : lines) {
+    gfx->setTextColor(strcmp(l, "Dimitri & Claude") == 0 ? TH_TEXT : TH_DIM);
+    gfx->setCursor((SCR_W - text_w(l)) / 2, y);
+    gfx->print(l);
+    y += 26;
+  }
+  if (bat_present && bat_pct >= 0) {
+    char bl[40];
+    snprintf(bl, sizeof(bl), "accu: %d%%%s", bat_pct,
+             bat_full ? " (vol)" : (bat_charging ? " (opladen)" : ""));
+    display_centred(bl, 388, 1, TH_DIM);
+  }
+  char ip[40];
+  snprintf(ip, sizeof(ip), "op je telefoon: http://%s", WiFi.localIP().toString().c_str());
+  display_centred(ip, 366, 1, TH_ACCENT);
+  btn(60, 410, 200, 48, "terug", true);
+  gfx->flush();
+  wait_tap();
+  beep_click(cfg.volume);
+}
+
+// ---- settings (two pages) -------------------------------------------------------------------
+static void screen_settings_more() {
+  for (;;) {
+    gfx->fillScreen(TH_BG);
+    display_header("meer");
+    char b[40];
+    snprintf(b, sizeof(b), "snel-dalend alarm: %s", cfg.alarm_fast ? "aan" : "uit");
+    btn(4, 62, 312, 44, b, cfg.alarm_fast);
+    snprintf(b, sizeof(b), "geen-data alarm: %s", cfg.alarm_nodata ? "aan" : "uit");
+    btn(4, 114, 312, 44, b, cfg.alarm_nodata);
+    snprintf(b, sizeof(b), "hoog stil 's nachts: %s", cfg.quiet_high_night ? "aan" : "uit");
+    btn(4, 166, 312, 44, b, cfg.quiet_high_night);
+    btn(4, 226, 312, 44, "naam wijzigen", false);
+    btn(4, 278, 312, 44, "dexcom-login wijzigen", false);
+    btn(4, 330, 312, 44, "wifi wijzigen", false);
+    btn(4, 382, 312, 44, "over dit display", false);
+    btn(4, 432, 312, 44, "terug", true);
+    gfx->flush();
+    wait_tap();
+    beep_click(cfg.volume);
+    if (in(4, 62, 312, 44)) cfg.alarm_fast = !cfg.alarm_fast;
+    else if (in(4, 114, 312, 44)) cfg.alarm_nodata = !cfg.alarm_nodata;
+    else if (in(4, 166, 312, 44)) cfg.quiet_high_night = !cfg.quiet_high_night;
+    else if (in(4, 226, 312, 44)) {
+      kb_input("naam op het display:", cfg.display_name, sizeof(cfg.display_name), false);
+      if (cfg.display_name[0] == '\0') strcpy(cfg.display_name, "Chantie");
+    }
+    else if (in(4, 278, 312, 44)) { config_save(); screen_dex_login(); }
+    else if (in(4, 330, 312, 44)) { config_save(); screen_wifi_setup(); }
+    else if (in(4, 382, 312, 44)) screen_credits();
+    else if (in(4, 432, 312, 44)) { config_save(); return; }
+    config_save();
+  }
+}
+
 static void screen_settings() {
   for (;;) {
     gfx->fillScreen(TH_BG);
     display_header("opties");
-    char b[32];
-    // one column: five value rows with -/+ zones, then toggle/action rows
+    char b[36];
     struct Row { const char *label; char val[16]; } rows[5];
     snprintf(rows[0].val, 16, "%s", cfg.use_mmol ? "mmol/L" : "mg/dL"); rows[0].label = "eenheid";
     snprintf(rows[1].val, 16, "%.1f", cfg.low_mmol);   rows[1].label = "laag";
@@ -404,7 +660,7 @@ static void screen_settings() {
     snprintf(rows[3].val, 16, "%u%%", cfg.volume);     rows[3].label = "volume";
     snprintf(rows[4].val, 16, "%u%%", cfg.dim_pct);    rows[4].label = "dim";
     for (int i = 0; i < 5; i++) {
-      int y = 54 + i * 42;
+      int y = 58 + i * 42;
       gfx->fillRoundRect(4, y, 224, 38, 8, TH_PANEL);
       font_med();
       gfx->setTextColor(TH_DIM);
@@ -415,19 +671,20 @@ static void screen_settings() {
       btn(276, y, 40, 38, "+", false);
     }
     snprintf(b, sizeof(b), "alarmen: %s", cfg.alarms_on ? "aan" : "uit");
-    btn(4, 54 + 5 * 42, 312, 38, b, cfg.alarms_on);
-    btn(4, 54 + 6 * 42, 312, 38,
-        cfg.night_dim ? "nachtdim: aan (22-07)" : "nachtdim: uit", false);
-    btn(4, 54 + 7 * 42, 312, 38, "dexcom-login wijzigen", false);
-    btn(4, 54 + 8 * 42, 312, 38, "wifi wijzigen", false);
-    btn(4, 54 + 9 * 42, 312, 38, "terug", true);
+    btn(4, 58 + 5 * 42, 312, 38, b, cfg.alarms_on);
+    const char *nm = cfg.night_mode == 0 ? "nacht: uit"
+                   : cfg.night_mode == 1 ? "nacht: dimmen (22-07)"
+                                         : "nacht: klok (22-07)";
+    btn(4, 58 + 6 * 42, 312, 38, nm, cfg.night_mode > 0);
+    btn(4, 58 + 7 * 42, 312, 38, "meer opties...", false);
+    btn(4, 58 + 8 * 42, 312, 38, "terug", true);
     gfx->flush();
     wait_tap();
     beep_click(cfg.volume);
     bool minus = false;
     int row = -1;
     for (int i = 0; i < 5; i++) {
-      int y = 54 + i * 42;
+      int y = 58 + i * 42;
       if (in(232, y, 40, 38)) { row = i; minus = true; }
       if (in(276, y, 40, 38)) { row = i; minus = false; }
     }
@@ -440,14 +697,13 @@ static void screen_settings() {
     }
     else if (row == 4) {
       cfg.dim_pct = constrain((int)cfg.dim_pct + (minus ? -5 : 5), 5, 60);
-      display_backlight(cfg.dim_pct);   // live preview while adjusting
+      display_backlight(cfg.dim_pct);   // live preview
     }
-    else if (in(4, 54 + 5 * 42, 312, 38)) cfg.alarms_on = !cfg.alarms_on;
-    else if (in(4, 54 + 6 * 42, 312, 38)) cfg.night_dim = !cfg.night_dim;
-    else if (in(4, 54 + 7 * 42, 312, 38)) { config_save(); screen_dex_login(); }
-    else if (in(4, 54 + 8 * 42, 312, 38)) { config_save(); screen_wifi_setup(); }
-    else if (in(4, 54 + 9 * 42, 312, 38)) { config_save(); display_backlight(100); return; }
-    if (row != 4) display_backlight(100);   // leaving the preview
+    else if (in(4, 58 + 5 * 42, 312, 38)) cfg.alarms_on = !cfg.alarms_on;
+    else if (in(4, 58 + 6 * 42, 312, 38)) cfg.night_mode = (cfg.night_mode + 1) % 3;
+    else if (in(4, 58 + 7 * 42, 312, 38)) { config_save(); screen_settings_more(); }
+    else if (in(4, 58 + 8 * 42, 312, 38)) { config_save(); display_backlight(100); return; }
+    if (row != 4) display_backlight(100);
     config_save();
   }
 }
@@ -455,29 +711,116 @@ static void screen_settings() {
 // ---- alarms ---------------------------------------------------------------------------
 static void handle_alarms() {
   if (!cfg.alarms_on || hist_n == 0) return;
-  if (millis() < snooze_until_ms) return;
+  time_t now = time(nullptr);
   const Egv &cur = hist[0];
-  if (time(nullptr) - cur.t > 12 * 60) return;    // stale data never alarms
+
+  // no data coming in: a soft nudge every 15 minutes (independent of snooze:
+  // a snoozed LOW should not silence a broken sensor)
+  if (cfg.alarm_nodata && now - cur.t > 20 * 60) {
+    if (millis() - last_nodata_ms > 15UL * 60000UL) {
+      beep_nodata(cfg.volume);
+      last_nodata_ms = millis();
+    }
+    return;                              // stale data: no value alarms
+  }
+  if (millis() < snooze_until_ms) return;
+  if (now - cur.t > 12 * 60) return;
+  if (cur.t == last_alarm_t) return;     // one alarm per reading max
+
   float v = to_mmol(cur.mgdl);
-  if (cur.t == last_alarm_t) return;              // one alarm per reading max
+  float prev = hist_n > 1 ? to_mmol(hist[1].mgdl) : v;
   if (v < cfg.low_mmol) {
     beep_alarm_low(cfg.volume);
     last_alarm_t = cur.t;
   } else if (v > cfg.high_mmol) {
-    beep_alarm_high(cfg.volume);
+    if (!(cfg.quiet_high_night && is_night())) {
+      beep_alarm_high(cfg.volume);
+      last_alarm_t = cur.t;
+    }
+  } else if (cfg.alarm_fast &&
+             (cur.trend == 7 || (prev - v) >= 0.85f) &&
+             v < cfg.low_mmol + 2.0f) {
+    // falling fast toward the floor: warn before the low happens
+    beep_fastdrop(cfg.volume);
     last_alarm_t = cur.t;
   }
+}
+
+// ---- web status page --------------------------------------------------------------------
+static const char *trend_arrow_txt(int8_t t) {
+  switch (t) {
+    case 1: return "&uarr;&uarr;"; case 2: return "&uarr;";
+    case 3: return "&nearr;"; case 4: return "&rarr;";
+    case 5: return "&searr;"; case 6: return "&darr;";
+    case 7: return "&darr;&darr;"; default: return "?";
+  }
+}
+
+static void web_root() {
+  String h = "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<meta http-equiv='refresh' content='60'>"
+    "<title>" + String(cfg.display_name) + "</title><style>"
+    "body{background:#101820;color:#fff;font-family:system-ui;text-align:center;padding-top:8vh}"
+    "h1{color:#E75480;font-size:2em;margin:0}"
+    ".v{font-size:6em;font-weight:700;margin:.1em 0}.t{font-size:2.5em}"
+    ".g{color:#90a0ac}.warn{color:#ff6060}small{color:#90a0ac}</style></head><body>";
+  h += "<h1>" + String(cfg.display_name) + " &hearts;</h1>";
+  if (hist_n > 0) {
+    time_t now = time(nullptr);
+    int age = (int)((now - hist[0].t) / 60);
+    char val[12];
+    if (cfg.use_mmol) snprintf(val, sizeof(val), "%.1f", to_mmol(hist[0].mgdl));
+    else snprintf(val, sizeof(val), "%d", hist[0].mgdl);
+    float v = to_mmol(hist[0].mgdl);
+    const char *col = v < cfg.low_mmol ? "#ff6060" : (v > cfg.high_mmol ? "#ffcc00" : "#fff");
+    h += "<div class='v' style='color:" + String(col) + "'>" + val + "</div>";
+    h += "<div class='t'>" + String(trend_arrow_txt(hist[0].trend)) + "</div>";
+    h += "<p class='" + String(age > 12 ? "warn" : "g") + "'>" + String(age) + " min geleden &middot; "
+       + (cfg.use_mmol ? "mmol/L" : "mg/dL") + "</p>";
+  } else {
+    h += "<p class='g'>nog geen data</p>";
+  }
+  if (bat_present && bat_pct >= 0) {
+    h += "<p class='g'>accu " + String(bat_pct) + "%" +
+         (bat_full ? " (vol)" : (bat_charging ? " &#9889; opladen" : "")) + "</p>";
+  }
+  h += "<small>geen medisch hulpmiddel &middot; ververst elke minuut</small></body></html>";
+  web.send(200, "text/html", h);
+}
+
+static void web_api() {
+  String j = "{";
+  if (hist_n > 0) {
+    j += "\"mgdl\":" + String(hist[0].mgdl);
+    j += ",\"mmol\":" + String(to_mmol(hist[0].mgdl), 1);
+    j += ",\"trend\":\"" + String(hist[0].trend >= 0 ? DEX_TRENDS[hist[0].trend] : "?") + "\"";
+    j += ",\"age_min\":" + String((int)((time(nullptr) - hist[0].t) / 60));
+  }
+  j += "}";
+  web.send(200, "application/json", j);
+}
+
+// ---- render dispatch ----------------------------------------------------------------------
+static void render() {
+  if (cfg.night_mode == 2 && is_night() && millis() >= wake_until_ms &&
+      !out_of_range_now())
+    draw_night();
+  else
+    draw_main();
 }
 
 // ---- setup / loop ----------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
   delay(1200);
-  Serial.println("\n=== AiMELO glucose kiosk ===");
+  Serial.println("\n=== glucose-display v" FW_VERSION " ===");
   config_load();
   if (!display_begin()) Serial.println("display init failed");
   touch_begin();
   beeps_begin();
+  battery_begin();
+  battery_poll();
 
   screen_disclaimer();
 
@@ -487,23 +830,19 @@ void setup() {
   net_ok = (WiFi.status() == WL_CONNECTED);
   Serial.printf("wifi: %s (%s)\n", cfg.wifi_ssid, WiFi.localIP().toString().c_str());
 
-  // Amsterdam time for the clock and reading ages
+  // Amsterdam time; the reliable source is Dexcom's Date header (dexcom.h),
+  // NTP is just a bonus when the network allows it.
   configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org", "time.nist.gov");
 
   if (cfg.dex_user[0] == '\0') screen_dex_login();
   dex_ok = true;
+
+  web.on("/", web_root);
+  web.on("/api", web_api);
+  web.begin();
+
   last_fetch_ms = 0;                    // fetch immediately
-  draw_main();
-}
-
-static uint32_t wake_until_ms = 0;
-
-// True while the newest (non-stale) reading sits outside the target range.
-static bool out_of_range_now() {
-  if (hist_n == 0) return false;
-  if (time(nullptr) - hist[0].t > 12 * 60) return false;
-  float v = to_mmol(hist[0].mgdl);
-  return v < cfg.low_mmol || v > cfg.high_mmol;
+  render();
 }
 
 void loop() {
@@ -512,43 +851,61 @@ void loop() {
     WiFi.reconnect();
     delay(2000);
   }
+  web.handleClient();
 
-  // Backlight: dim at night, but never while out of range, and any tap buys
-  // a minute of full brightness.
+  // Backlight: dim at night (mode 1 and 2), never while out of range, and a
+  // tap buys a minute of full brightness.
+  {
+    bool night = cfg.night_mode > 0 && is_night();
+    bool full = !night || out_of_range_now() || millis() < wake_until_ms;
+    display_backlight(full ? 100 : cfg.dim_pct);
+  }
+
+  if (net_ok && (last_fetch_ms == 0 || millis() - last_fetch_ms > 60000)) {
+    int n = dex_fetch(hist, HIST_MAX, 24 * 60);
+    if (n > 0) { hist_n = n; dex_ok = true; }
+    else if (n < 0) { dex_ok = false; Serial.printf("dexcom: %s\n", dex_last_error); }
+    last_fetch_ms = millis();
+    render();
+    handle_alarms();
+  }
+  if (millis() - last_draw_ms > 30000) {
+    battery_poll();
+    render();
+    last_draw_ms = millis();
+  }
+
+  // morning greeting, once per day between 7 and 10
   {
     time_t nw = time(nullptr);
     struct tm tmnow;
     localtime_r(&nw, &tmnow);
-    bool night = cfg.night_dim && (tmnow.tm_hour >= 22 || tmnow.tm_hour < 7);
-    bool full = !night || out_of_range_now() || millis() < wake_until_ms;
-    display_backlight(full ? 100 : cfg.dim_pct);
+    if (tmnow.tm_year > 100 && tmnow.tm_hour >= 7 && tmnow.tm_hour < 10 &&
+        greeted_yday != tmnow.tm_yday && hist_n > 0) {
+      greeted_yday = tmnow.tm_yday;
+      screen_greeting();
+      render();
+    }
   }
-  if (net_ok && (last_fetch_ms == 0 || millis() - last_fetch_ms > 60000)) {
-    int n = dex_fetch(hist, HIST_MAX, 6 * 60);
-    if (n > 0) { hist_n = n; dex_ok = true; }
-    else if (n < 0) { dex_ok = false; Serial.printf("dexcom: %s\n", dex_last_error); }
-    last_fetch_ms = millis();
-    draw_main();
-    handle_alarms();
-  }
-  if (millis() - last_draw_ms > 30000) {  // keep clock and 'min geleden' fresh
-    draw_main();
-    last_draw_ms = millis();
-  }
+
   if (touch_tapped()) {
-    if (in(266, 286, 50, 44)) {        // the "..." on the graph card
+    if (in(266, 286, 50, 44)) {          // "..." on the graph card
       beep_click(cfg.volume);
       screen_settings();
       touch_irq = false;
-      last_fetch_ms = 0;               // settings may have changed server/units
+      last_fetch_ms = 0;                 // units/server may have changed
+    } else if (in(8, 288, 258, 184)) {   // the graph itself -> statistics
+      beep_click(cfg.volume);
+      screen_stats();
+      touch_irq = false;
     } else {
-      // any other tap: wake the screen; snooze alarms only when one is active
+      // wake the screen; snooze alarms only when one is active
       wake_until_ms = millis() + 60000;
       if (out_of_range_now())
         snooze_until_ms = millis() + 30UL * 60UL * 1000UL;
       beep_click(cfg.volume);
     }
-    draw_main();
+    render();
   }
   delay(20);
 }

@@ -21,6 +21,7 @@ struct KioskConfig {
   uint8_t night_mode;   // at 22:00-07:00: 0 = off, 1 = dim, 2 = amber clock
   uint8_t dim_pct;      // night brightness, percent
   uint8_t graph_hours;  // main-graph window: 3, 6, 12 or 24
+  uint8_t theme;        // colour+font preset (see THEME_PRESETS)
   bool alarm_fast;      // alarm on fast drops even inside the range
   bool alarm_nodata;    // alarm when readings stop coming in
   bool quiet_high_night;// suppress the HIGH alarm at night (low always sounds)
@@ -47,6 +48,7 @@ static void config_load() {
   cfg.night_mode = cfg_prefs.getUChar("nmode", 1);
   cfg.dim_pct    = cfg_prefs.getUChar("dimpct", 12);
   cfg.graph_hours = cfg_prefs.getUChar("ghours", 3);
+  cfg.theme      = cfg_prefs.getUChar("theme", 0);
   cfg.alarm_fast = cfg_prefs.getBool("afast", true);
   cfg.alarm_nodata = cfg_prefs.getBool("anodata", true);
   cfg.quiet_high_night = cfg_prefs.getBool("qhigh", true);
@@ -68,6 +70,7 @@ static void config_save() {
   cfg_prefs.putUChar("nmode", cfg.night_mode);
   cfg_prefs.putUChar("dimpct", cfg.dim_pct);
   cfg_prefs.putUChar("ghours", cfg.graph_hours);
+  cfg_prefs.putUChar("theme", cfg.theme);
   cfg_prefs.putBool("afast", cfg.alarm_fast);
   cfg_prefs.putBool("anodata", cfg.alarm_nodata);
   cfg_prefs.putBool("qhigh", cfg.quiet_high_night);

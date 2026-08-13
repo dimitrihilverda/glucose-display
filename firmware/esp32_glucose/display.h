@@ -11,8 +11,32 @@
 #define TH_BG      0x10C4   // #101820 near-black blue
 #define TH_PANEL   0x322B   // #33475B slate
 #define TH_TEXT    0xFFFF
-#define TH_ACCENT  0xE2B0   // #E75480 pink -- the house colour now
 #define TH_DIM     0x9515   // #90A0AC secondary text
+
+// Colour + name-font presets. The accent runs through everything: the name
+// and heart, the buttons on the dark screens, and the web pages. Script
+// themes keep the heart; the tough block-letter themes go without.
+struct ThemePreset {
+  const char *name;
+  uint16_t main, dark;
+  const char *hex;
+  uint8_t script;      // 1 = script font + heart, 0 = block letters, no heart
+};
+static const ThemePreset THEME_PRESETS[] = {
+  { "roze",   0xE2B0, 0xC18C, "#E75480", 1 },
+  { "paars",  0x8B7D, 0x6A58, "#8E6CEF", 1 },
+  { "blauw",  0x2C3B, 0x1AF5, "#2E86DE", 0 },
+  { "groen",  0x256C, 0x1C09, "#27AE60", 0 },
+  { "oranje", 0xE3E4, 0xB303, "#E67E22", 0 },
+  { "rood",   0xE267, 0xB1C5, "#E74C3C", 0 },
+};
+#define THEME_COUNT 6
+static const ThemePreset &th() { return THEME_PRESETS[cfg.theme % THEME_COUNT]; }
+static uint16_t th_accent()      { return th().main; }
+static uint16_t th_accent_dark() { return th().dark; }
+static const char *th_hex()      { return th().hex; }
+static const char *th_name()     { return th().name; }
+#define TH_ACCENT th_accent()
 
 #define QSPI_BL   1
 #define QSPI_CS   45
@@ -47,8 +71,8 @@
 #define DX_BAND  0xE73D         // target-range band
 #define DX_YEL   0xFE60         // high line / high circle
 #define DX_RED   0xF9C6         // low line / low circle
-#define DX_PINK  0xE2B0         // the owner's name
-#define DX_PINKD 0xC18C         // heart
+#define DX_PINK  th_accent()    // the owner's name follows the theme
+#define DX_PINKD th_accent_dark()
 #define DX_GREEN 0x362B         // in-range share of the TIR bar
 #define NT_AMBER 0xFD80         // night clock digits on black
 
@@ -88,6 +112,7 @@ static void font_med()    { gfx->setFont(&UiMed);      gfx->setTextSize(1); }
 static void font_small()  { gfx->setFont(&UiSmall);    gfx->setTextSize(1); }
 static void font_px(int s){ gfx->setFont((const GFXfont *)nullptr); gfx->setTextSize(s); }
 static void font_script(){ gfx->setFont(&NameScript);  gfx->setTextSize(1); }
+static void font_name()  { gfx->setFont(th().script ? &NameScript : &NameBold); gfx->setTextSize(1); }
 static int text_w(const char *s) {
   int16_t x1, y1; uint16_t w, h;
   gfx->getTextBounds((char *)s, 0, 100, &x1, &y1, &w, &h);
@@ -101,14 +126,15 @@ static void draw_heart(int cx, int cy, int s, uint16_t color) {
   gfx->fillCircle(cx + s / 2, cy - s / 3, (s + 1) / 2 + 1, color);
 }
 
-// The owner's name in script with a heart; returns nothing, draws at a
-// baseline. Works on both the dark and the light theme.
+// The owner's name in the theme's font; script themes get a heart, the
+// block-letter themes stay plain. Works on dark and light backgrounds.
 static void draw_name(int x, int baseline, uint16_t color, uint16_t heart) {
-  font_script();
+  font_name();
   gfx->setTextColor(color);
   gfx->setCursor(x, baseline);
   gfx->print(cfg.display_name);
-  draw_heart(x + text_w(cfg.display_name) + 16, baseline - 12, 8, heart);
+  if (th().script)
+    draw_heart(x + text_w(cfg.display_name) + 16, baseline - 12, 8, heart);
 }
 
 // Header for the setup screens: the owner's name in script, pink.

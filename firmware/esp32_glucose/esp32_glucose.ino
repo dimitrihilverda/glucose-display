@@ -7,7 +7,7 @@
 // NOT A MEDICAL DEVICE. Readings arrive via Dexcom Share with the usual
 // 5-minute cadence; treatment decisions belong on the official Dexcom app.
 
-#define FW_VERSION "1.2"
+#define FW_VERSION "1.3"
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -653,40 +653,41 @@ static void screen_settings() {
     gfx->fillScreen(TH_BG);
     display_header("opties");
     char b[36];
-    struct Row { const char *label; char val[16]; } rows[5];
+    struct Row { const char *label; char val[16]; } rows[6];
     snprintf(rows[0].val, 16, "%s", cfg.use_mmol ? "mmol/L" : "mg/dL"); rows[0].label = "eenheid";
     snprintf(rows[1].val, 16, "%.1f", cfg.low_mmol);   rows[1].label = "laag";
     snprintf(rows[2].val, 16, "%.1f", cfg.high_mmol);  rows[2].label = "hoog";
     snprintf(rows[3].val, 16, "%u%%", cfg.volume);     rows[3].label = "volume";
     snprintf(rows[4].val, 16, "%u%%", cfg.dim_pct);    rows[4].label = "dim";
-    for (int i = 0; i < 5; i++) {
-      int y = 58 + i * 42;
-      gfx->fillRoundRect(4, y, 224, 38, 8, TH_PANEL);
+    snprintf(rows[5].val, 16, "%s", th_name());        rows[5].label = "kleur";
+    for (int i = 0; i < 6; i++) {
+      int y = 54 + i * 40;
+      gfx->fillRoundRect(4, y, 224, 36, 8, TH_PANEL);
       font_med();
       gfx->setTextColor(TH_DIM);
-      gfx->setCursor(14, y + 27); gfx->print(rows[i].label);
-      gfx->setTextColor(TH_TEXT);
-      gfx->setCursor(120, y + 27); gfx->print(rows[i].val);
-      btn(232, y, 40, 38, "-", false);
-      btn(276, y, 40, 38, "+", false);
+      gfx->setCursor(14, y + 26); gfx->print(rows[i].label);
+      gfx->setTextColor(i == 5 ? TH_ACCENT : TH_TEXT);
+      gfx->setCursor(120, y + 26); gfx->print(rows[i].val);
+      btn(232, y, 40, 36, "-", false);
+      btn(276, y, 40, 36, "+", false);
     }
     snprintf(b, sizeof(b), "alarmen: %s", cfg.alarms_on ? "aan" : "uit");
-    btn(4, 58 + 5 * 42, 312, 38, b, cfg.alarms_on);
+    btn(4, 54 + 6 * 40, 312, 36, b, cfg.alarms_on);
     const char *nm = cfg.night_mode == 0 ? "nacht: uit"
                    : cfg.night_mode == 1 ? "nacht: dimmen (22-07)"
                                          : "nacht: klok (22-07)";
-    btn(4, 58 + 6 * 42, 312, 38, nm, cfg.night_mode > 0);
-    btn(4, 58 + 7 * 42, 312, 38, "meer opties...", false);
-    btn(4, 58 + 8 * 42, 312, 38, "terug", true);
+    btn(4, 54 + 7 * 40, 312, 36, nm, cfg.night_mode > 0);
+    btn(4, 54 + 8 * 40, 312, 36, "meer opties...", false);
+    btn(4, 54 + 9 * 40, 312, 36, "terug", true);
     gfx->flush();
     wait_tap();
     beep_click(cfg.volume);
     bool minus = false;
     int row = -1;
-    for (int i = 0; i < 5; i++) {
-      int y = 58 + i * 42;
-      if (in(232, y, 40, 38)) { row = i; minus = true; }
-      if (in(276, y, 40, 38)) { row = i; minus = false; }
+    for (int i = 0; i < 6; i++) {
+      int y = 54 + i * 40;
+      if (in(232, y, 40, 36)) { row = i; minus = true; }
+      if (in(276, y, 40, 36)) { row = i; minus = false; }
     }
     if (row == 0) cfg.use_mmol = !cfg.use_mmol;
     else if (row == 1) cfg.low_mmol = constrain(cfg.low_mmol + (minus ? -0.5f : 0.5f), 3.0f, 6.5f);
@@ -699,10 +700,12 @@ static void screen_settings() {
       cfg.dim_pct = constrain((int)cfg.dim_pct + (minus ? -5 : 5), 5, 60);
       display_backlight(cfg.dim_pct);   // live preview
     }
-    else if (in(4, 58 + 5 * 42, 312, 38)) cfg.alarms_on = !cfg.alarms_on;
-    else if (in(4, 58 + 6 * 42, 312, 38)) cfg.night_mode = (cfg.night_mode + 1) % 3;
-    else if (in(4, 58 + 7 * 42, 312, 38)) { config_save(); screen_settings_more(); }
-    else if (in(4, 58 + 8 * 42, 312, 38)) { config_save(); display_backlight(100); return; }
+    else if (row == 5)
+      cfg.theme = (cfg.theme + (minus ? THEME_COUNT - 1 : 1)) % THEME_COUNT;
+    else if (in(4, 54 + 6 * 40, 312, 36)) cfg.alarms_on = !cfg.alarms_on;
+    else if (in(4, 54 + 7 * 40, 312, 36)) cfg.night_mode = (cfg.night_mode + 1) % 3;
+    else if (in(4, 54 + 8 * 40, 312, 36)) { config_save(); screen_settings_more(); }
+    else if (in(4, 54 + 9 * 40, 312, 36)) { config_save(); display_backlight(100); return; }
     if (row != 4) display_backlight(100);
     config_save();
   }
@@ -762,7 +765,7 @@ static void web_root() {
     "<meta http-equiv='refresh' content='60'>"
     "<title>" + String(cfg.display_name) + "</title><style>"
     "body{background:#101820;color:#fff;font-family:system-ui;text-align:center;padding-top:8vh}"
-    "h1{color:#E75480;font-size:2em;margin:0}"
+    "h1{color:" + String(th_hex()) + ";font-size:2em;margin:0}"
     ".v{font-size:6em;font-weight:700;margin:.1em 0}.t{font-size:2.5em}"
     ".g{color:#90a0ac}.warn{color:#ff6060}small{color:#90a0ac}</style></head><body>";
   h += "<h1>" + String(cfg.display_name) + " &hearts;</h1>";
@@ -785,6 +788,7 @@ static void web_root() {
     h += "<p class='g'>accu " + String(bat_pct) + "%" +
          (bat_full ? " (vol)" : (bat_charging ? " &#9889; opladen" : "")) + "</p>";
   }
+  h += "<p><a href='/instellingen' style='color:" + String(th_hex()) + "'>instellingen</a></p>";
   h += "<small>geen medisch hulpmiddel &middot; ververst elke minuut</small></body></html>";
   web.send(200, "text/html", h);
 }
@@ -799,6 +803,92 @@ static void web_api() {
   }
   j += "}";
   web.send(200, "application/json", j);
+}
+
+
+// ---- web settings form ---------------------------------------------------------
+// Display and alarm preferences only; WiFi and Dexcom credentials can only be
+// changed on the device itself, never over the network.
+static void render();                    // defined below, used after a save
+
+static void web_settings_form() {
+  String h = "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>instellingen</title><style>"
+    "body{background:#101820;color:#fff;font-family:system-ui;max-width:26em;margin:0 auto;padding:1em}"
+    "h1{color:" + String(th_hex()) + "}label{display:block;margin:.9em 0 .25em;color:#90a0ac}"
+    "input,select{width:100%;padding:.5em;border-radius:8px;border:0;background:#33475B;color:#fff;font-size:1em}"
+    "input[type=checkbox]{width:auto;transform:scale(1.4);margin-right:.6em}"
+    ".row{margin:.6em 0}.ok{color:#7be07b}"
+    "button{margin-top:1.2em;width:100%;padding:.8em;border:0;border-radius:10px;"
+    "background:" + String(th_hex()) + ";color:#101820;font-size:1.1em;font-weight:700}"
+    "a{color:" + String(th_hex()) + "}</style></head><body><h1>instellingen</h1>";
+  if (web.hasArg("ok")) h += "<p class='ok'>opgeslagen &#10003;</p>";
+  h += "<form method='post' action='/instellingen'>";
+  h += "<label>naam op het display</label><input name='name' maxlength='24' value='" + String(cfg.display_name) + "'>";
+  h += "<label>eenheid</label><select name='unit'>";
+  h += String("<option value='mmol'") + (cfg.use_mmol ? " selected" : "") + ">mmol/L</option>";
+  h += String("<option value='mgdl'") + (!cfg.use_mmol ? " selected" : "") + ">mg/dL</option></select>";
+  h += "<label>laag alarm (mmol/L)</label><input name='low' type='number' step='0.1' min='3' max='6.5' value='" + String(cfg.low_mmol, 1) + "'>";
+  h += "<label>hoog alarm (mmol/L)</label><input name='high' type='number' step='0.1' min='7' max='20' value='" + String(cfg.high_mmol, 1) + "'>";
+  h += "<label>volume: " + String(cfg.volume) + "%</label><input name='vol' type='range' min='10' max='100' step='10' value='" + String(cfg.volume) + "'>";
+  h += "<label>nachtdim-niveau: " + String(cfg.dim_pct) + "%</label><input name='dim' type='range' min='5' max='60' step='5' value='" + String(cfg.dim_pct) + "'>";
+  h += "<label>nachtmodus (22:00-07:00)</label><select name='night'>";
+  const char *nopts[3] = {"uit", "dimmen", "amber klok"};
+  for (int i = 0; i < 3; i++)
+    h += "<option value='" + String(i) + "'" + (cfg.night_mode == i ? " selected" : "") + ">" + nopts[i] + "</option>";
+  h += "</select>";
+  h += "<label>grafiekvenster</label><select name='ghours'>";
+  const int gh[4] = {3, 6, 12, 24};
+  for (int i = 0; i < 4; i++)
+    h += "<option value='" + String(gh[i]) + "'" + (cfg.graph_hours == gh[i] ? " selected" : "") + ">" + String(gh[i]) + " uur</option>";
+  h += "</select>";
+  h += "<label>kleur & stijl</label><select name='theme'>";
+  for (int i = 0; i < THEME_COUNT; i++)
+    h += "<option value='" + String(i) + "'" + (cfg.theme == i ? " selected" : "") + ">"
+       + THEME_PRESETS[i].name + (THEME_PRESETS[i].script ? " (sierlijk)" : " (strak)") + "</option>";
+  h += "</select>";
+  h += String("<div class='row'><label><input type='checkbox' name='alarms'") + (cfg.alarms_on ? " checked" : "") + ">alarmen aan</label></div>";
+  h += String("<div class='row'><label><input type='checkbox' name='fast'") + (cfg.alarm_fast ? " checked" : "") + ">snel-dalend alarm</label></div>";
+  h += String("<div class='row'><label><input type='checkbox' name='nodata'") + (cfg.alarm_nodata ? " checked" : "") + ">geen-data alarm</label></div>";
+  h += String("<div class='row'><label><input type='checkbox' name='qhigh'") + (cfg.quiet_high_night ? " checked" : "") + ">hoog-alarm stil 's nachts</label></div>";
+  h += "<button>opslaan</button></form>";
+  h += "<p><a href='/'>&larr; terug</a></p>";
+  h += "<small style='color:#90a0ac'>wifi en dexcom-login wijzig je op het apparaat zelf</small></body></html>";
+  web.send(200, "text/html", h);
+}
+
+static void web_settings_save() {
+  if (web.hasArg("name")) {
+    // keep only characters the script font can draw
+    char nm[25]; int k = 0;
+    String s = web.arg("name");
+    for (unsigned i = 0; i < s.length() && k < 24; i++) {
+      char c = s[i];
+      if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == ' ') nm[k++] = c;
+    }
+    nm[k] = '\0';
+    if (nm[0]) strncpy(cfg.display_name, nm, sizeof(cfg.display_name));
+  }
+  if (web.hasArg("unit")) cfg.use_mmol = (web.arg("unit") == "mmol");
+  if (web.hasArg("low"))  cfg.low_mmol  = constrain(web.arg("low").toFloat(), 3.0f, 6.5f);
+  if (web.hasArg("high")) cfg.high_mmol = constrain(web.arg("high").toFloat(), 7.0f, 20.0f);
+  if (web.hasArg("vol"))  cfg.volume    = constrain(web.arg("vol").toInt(), 10, 100);
+  if (web.hasArg("dim"))  cfg.dim_pct   = constrain(web.arg("dim").toInt(), 5, 60);
+  if (web.hasArg("night")) cfg.night_mode = constrain(web.arg("night").toInt(), 0, 2);
+  if (web.hasArg("theme")) cfg.theme = constrain(web.arg("theme").toInt(), 0, THEME_COUNT - 1);
+  if (web.hasArg("ghours")) {
+    int g = web.arg("ghours").toInt();
+    if (g == 3 || g == 6 || g == 12 || g == 24) cfg.graph_hours = g;
+  }
+  cfg.alarms_on        = web.hasArg("alarms");
+  cfg.alarm_fast       = web.hasArg("fast");
+  cfg.alarm_nodata     = web.hasArg("nodata");
+  cfg.quiet_high_night = web.hasArg("qhigh");
+  config_save();
+  render();                              // the screen follows immediately
+  web.sendHeader("Location", "/instellingen?ok=1");
+  web.send(303, "text/plain", "");
 }
 
 // ---- render dispatch ----------------------------------------------------------------------
@@ -839,6 +929,8 @@ void setup() {
 
   web.on("/", web_root);
   web.on("/api", web_api);
+  web.on("/instellingen", HTTP_GET, web_settings_form);
+  web.on("/instellingen", HTTP_POST, web_settings_save);
   web.begin();
 
   last_fetch_ms = 0;                    // fetch immediately

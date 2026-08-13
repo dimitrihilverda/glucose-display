@@ -12,12 +12,13 @@
 
 #define BAT_ADC_PIN 5
 #define BAT_DIVIDER 1.72f
-#define BAT_WINDOW  8          // rolling average over recent polls
+#define BAT_WINDOW  4          // rolling average over recent polls
 
 static bool bat_present = false;
 static int bat_pct = -1;
 static float bat_volt = 0.0f;
 static bool bat_charging = false, bat_full = false;
+static bool bat_unplugged = false;     // hysteresis state: on battery power
 
 static float bat_win[BAT_WINDOW];
 static int bat_win_n = 0, bat_win_i = 0;
@@ -64,20 +65,26 @@ static void battery_poll() {
   bat_pct = (int)(bat_curve_pct(bat_volt) + 0.5f);
   bat_full = bat_volt >= 4.15f && bat_pct >= 100;
   bat_charging = bat_volt >= 4.18f && !bat_full;
+  // hysteresis keeps the state stable around the threshold
+  if (bat_volt < 4.12f) bat_unplugged = true;
+  else if (bat_volt > 4.19f) bat_unplugged = false;
 }
 
 static void battery_begin() {
   analogReadResolution(12);
+  // seed the whole window so the state is right from the first minute
+  float v = bat_read_volt();
+  for (int i = 0; i < BAT_WINDOW; i++) bat_win[i] = v;
+  bat_win_n = BAT_WINDOW;
   battery_poll();
   Serial.printf("battery: adc gpio5 %.2fV -> %s\n", bat_volt,
                 bat_present ? String(String(bat_pct) + "%").c_str() : "geen accu");
 }
 
-// On battery = plausible LiPo voltage below charge level. During the first
-// charging phase of a deeply drained battery this can briefly read as
-// on-battery; the only effect is a dimmer screen while it charges.
+// On battery per the hysteresis state above; a full pack fresh off the
+// charger may read as plugged for its first minutes under load.
 static bool bat_on_battery() {
-  return bat_present && bat_volt < 4.15f;
+  return bat_present && bat_unplugged;
 }
 
 // Small battery glyph with fill level, a bolt while charging.

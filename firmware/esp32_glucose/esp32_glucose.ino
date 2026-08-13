@@ -7,7 +7,7 @@
 // NOT A MEDICAL DEVICE. Readings arrive via Dexcom Share with the usual
 // 5-minute cadence; treatment decisions belong on the official Dexcom app.
 
-#define FW_VERSION "1.7"
+#define FW_VERSION "1.8"
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -607,8 +607,9 @@ static void screen_credits() {
   }
   if (bat_present && bat_pct >= 0) {
     char bl[48];
-    snprintf(bl, sizeof(bl), "accu: %d%% (%.2fV)%s", bat_pct, bat_volt,
-             bat_full ? " vol" : (bat_charging ? " opladen" : ""));
+    snprintf(bl, sizeof(bl), "accu: %d%% (%.2fV) %s", bat_pct, bat_volt,
+             bat_full ? "vol" : (bat_charging ? "opladen"
+                       : (bat_on_battery() ? "op accu" : "op lader")));
     display_centred(bl, 398, 1, TH_DIM);
   }
   char ip[48];
@@ -1146,6 +1147,15 @@ void loop() {
   web.handleClient();
   alarm_pump();
 
+  // battery state feeds the backlight logic; poll it briskly
+  {
+    static uint32_t last_batt_ms = 0;
+    if (millis() - last_batt_ms > 5000) {
+      battery_poll();
+      last_batt_ms = millis();
+    }
+  }
+
   // Backlight: the configured day brightness, dimmer on battery, dimmest at
   // night. Alarms and taps always get the full day level -- visibility wins.
   {
@@ -1168,7 +1178,6 @@ void loop() {
     handle_alarms();
   }
   if (millis() - last_draw_ms > 30000) {
-    battery_poll();
     render();
     last_draw_ms = millis();
   }

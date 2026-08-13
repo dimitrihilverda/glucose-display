@@ -7,7 +7,7 @@
 // NOT A MEDICAL DEVICE. Readings arrive via Dexcom Share with the usual
 // 5-minute cadence; treatment decisions belong on the official Dexcom app.
 
-#define FW_VERSION "1.8"
+#define FW_VERSION "1.9"
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -82,6 +82,14 @@ static bool wait_tap_for(uint32_t ms) {
     if (touch_tapped()) return true;
   }
   return false;
+}
+// The touch chip keeps reporting while the finger is down; after a blocking
+// screen returns, wait out the lift and clear the latched event, or the next
+// screen inherits the tap (the phantom stats-open bug).
+static void touch_drain(uint32_t ms) {
+  uint32_t until = millis() + ms;
+  while (millis() < until) delay(20);
+  touch_irq = false;
 }
 
 // ---- disclaimer ---------------------------------------------------------------
@@ -175,6 +183,15 @@ static void screen_wifi_setup() {
       char ssid[33], pass[65] = "";
       strncpy(ssid, WiFi.SSID(i).c_str(), 32); ssid[32] = '\0';
       bool open_net = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN);
+      // known network: quietly try the stored password before asking for it
+      if (!open_net && strcmp(ssid, cfg.wifi_ssid) == 0 && cfg.wifi_pass[0] != '\0') {
+        strcpy(pass, cfg.wifi_pass);
+        if (wifi_connect_ui(ssid, pass)) {
+          beep_ok(cfg.volume);
+          return;
+        }
+        pass[0] = '\0';
+      }
       if (!open_net && !kb_input("wifi-wachtwoord:", pass, sizeof(pass), true))
         break;
       if (wifi_connect_ui(ssid, pass)) {
@@ -607,9 +624,9 @@ static void screen_credits() {
   }
   if (bat_present && bat_pct >= 0) {
     char bl[48];
-    snprintf(bl, sizeof(bl), "accu: %d%% (%.2fV) %s", bat_pct, bat_volt,
+    snprintf(bl, sizeof(bl), "accu: %d%% (%.2fV) %s - scherm %u%%", bat_pct, bat_volt,
              bat_full ? "vol" : (bat_charging ? "opladen"
-                       : (bat_on_battery() ? "op accu" : "op lader")));
+                       : (bat_on_battery() ? "op accu" : "op lader")), backlight_now);
     display_centred(bl, 398, 1, TH_DIM);
   }
   char ip[48];
@@ -655,7 +672,7 @@ static void screen_test() {
       display_backlight(100);
     }
     else if (in(4, 314, 312, 48)) { beep_click(cfg.volume); screen_greeting(); }
-    else if (in(4, 412, 312, 48)) { beep_click(cfg.volume); return; }
+    else if (in(4, 412, 312, 68)) { beep_click(cfg.volume); return; }
   }
 }
 
@@ -694,7 +711,7 @@ static void screen_settings_system() {
     else if (in(4, 224, 312, 46)) screen_test();
     else if (in(4, 278, 312, 46)) { web_pass_generate(); screen_credits(); }
     else if (in(4, 332, 312, 46)) screen_credits();
-    else if (in(4, 420, 312, 46)) { config_save(); return; }
+    else if (in(4, 420, 312, 60)) { config_save(); return; }
     config_save();
   }
 }
@@ -764,7 +781,7 @@ static void screen_settings_more() {
     else if (row == 7) cfg.night_start = (cfg.night_start + (minus ? 23 : 1)) % 24;
     else if (row == 8) cfg.night_end = (cfg.night_end + (minus ? 23 : 1)) % 24;
     else if (in(4, Y(9), 312, 35)) { config_save(); screen_settings_system(); }
-    else if (in(4, Y(10), 312, 35)) { config_save(); display_backlight(cfg.bright_pct); return; }
+    else if (in(4, Y(10), 312, 42)) { config_save(); display_backlight(cfg.bright_pct); return; }
     if (row != 5 && row != 6) display_backlight(cfg.bright_pct);
     config_save();
   }
@@ -829,7 +846,7 @@ static void screen_settings() {
     else if (in(4, 54 + 6 * 40, 312, 36)) cfg.alarms_on = !cfg.alarms_on;
     else if (in(4, 54 + 7 * 40, 312, 36)) cfg.night_mode = (cfg.night_mode + 1) % 3;
     else if (in(4, 54 + 8 * 40, 312, 36)) { config_save(); screen_settings_more(); }
-    else if (in(4, 54 + 9 * 40, 312, 36)) { config_save(); display_backlight(100); return; }
+    else if (in(4, 54 + 9 * 40, 312, 66)) { config_save(); display_backlight(100); return; }  // hitbox loopt door tot de rand
     if (row != 4) display_backlight(100);
     config_save();
   }
@@ -1113,7 +1130,13 @@ void setup() {
   screen_disclaimer();
 
   WiFi.mode(WIFI_STA);
-  if (cfg.wifi_ssid[0] == '\0' || !wifi_connect_ui(cfg.wifi_ssid, cfg.wifi_pass))
+  // Two attempts before falling back to the picker: the first connect after
+  // a fresh flash runs a full RF calibration and can miss one 15s window.
+  bool wifi_up = false;
+  if (cfg.wifi_ssid[0] != '\0')
+    for (int t = 0; t < 2 && !wifi_up; t++)
+      wifi_up = wifi_connect_ui(cfg.wifi_ssid, cfg.wifi_pass);
+  if (!wifi_up)
     screen_wifi_setup();
   net_ok = (WiFi.status() == WL_CONNECTED);
   Serial.printf("wifi: %s (%s)\n", cfg.wifi_ssid, WiFi.localIP().toString().c_str());
@@ -1157,10 +1180,16 @@ void loop() {
   }
 
   // Backlight: the configured day brightness, dimmer on battery, dimmest at
-  // night. Alarms and taps always get the full day level -- visibility wins.
+  // night. A LOW keeps the full day level for as long as it lasts (safety),
+  // as does an alarm episode that is still sounding -- but a lingering HIGH
+  // alone no longer pins the screen bright, so battery/night dimming works.
   {
     bool night = cfg.night_mode > 0 && is_night();
-    bool attention = out_of_range_now() || millis() < wake_until_ms;
+    bool low_now = hist_n > 0 && time(nullptr) - hist[0].t < 20 * 60 &&
+                   to_mmol(hist[0].mgdl) < cfg.low_mmol;
+    bool alarm_busy = alarm_kind != 0 && millis() >= snooze_until_ms &&
+                      alarm_count < cfg.alarm_repeats;
+    bool attention = low_now || alarm_busy || millis() < wake_until_ms;
     uint8_t base = bat_on_battery() ? cfg.bright_bat : cfg.bright_pct;
     uint8_t bl;
     if (attention) bl = cfg.bright_pct;
@@ -1199,12 +1228,12 @@ void loop() {
     if (in(266, 286, 50, 44)) {          // "..." on the graph card
       beep_click(cfg.volume);
       screen_settings();
-      touch_irq = false;
+      touch_drain(600);
       last_fetch_ms = 0;                 // units/server may have changed
     } else if (in(8, 288, 258, 184)) {   // the graph itself -> statistics
       beep_click(cfg.volume);
       screen_stats();
-      touch_irq = false;
+      touch_drain(600);
     } else {
       // wake the screen; snooze alarms only when one is active
       wake_until_ms = millis() + 60000;

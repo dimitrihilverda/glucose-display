@@ -85,13 +85,13 @@ static Arduino_Canvas *gfx =
 
 // PWM backlight, 0-100%. Used at 100 by day and a low glow at night; alarms
 // and taps bring it back to full.
+static uint8_t backlight_now = 255;    // last level written; credits shows it
 static void display_backlight(uint8_t pct) {
-  static uint8_t last = 255;
-  if (pct == last) return;
+  if (pct == backlight_now) return;
   static bool init = false;
   if (!init) { ledcAttach(QSPI_BL, 5000, 8); init = true; }
   ledcWrite(QSPI_BL, (uint32_t)255 * pct / 100);
-  last = pct;
+  backlight_now = pct;
 }
 
 static bool display_begin() {

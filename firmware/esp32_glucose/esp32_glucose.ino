@@ -7,7 +7,7 @@
 // NOT A MEDICAL DEVICE. Readings arrive via Dexcom Share with the usual
 // 5-minute cadence; treatment decisions belong on the official Dexcom app.
 
-#define FW_VERSION "1.6"
+#define FW_VERSION "1.7"
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -703,54 +703,68 @@ static void screen_settings_more() {
     gfx->fillScreen(TH_BG);
     display_header("meer");
     char b[40];
+    auto Y = [](int i) { return 48 + i * 39; };
+    auto spin = [&](int i, const char *label) {
+      int y = Y(i);
+      gfx->fillRoundRect(4, y, 224, 35, 8, TH_PANEL);
+      font_med();
+      gfx->setTextColor(TH_TEXT);
+      gfx->setCursor(14, y + 26);
+      gfx->print(label);
+      btn(232, y, 40, 35, "-", false);
+      btn(276, y, 40, 35, "+", false);
+    };
     snprintf(b, sizeof(b), "snel-dalend alarm: %s", cfg.alarm_fast ? "aan" : "uit");
-    btn(4, 60, 312, 42, b, cfg.alarm_fast);
+    btn(4, Y(0), 312, 35, b, cfg.alarm_fast);
     snprintf(b, sizeof(b), "geen-data alarm: %s", cfg.alarm_nodata ? "aan" : "uit");
-    btn(4, 108, 312, 42, b, cfg.alarm_nodata);
+    btn(4, Y(1), 312, 35, b, cfg.alarm_nodata);
     snprintf(b, sizeof(b), "hoog stil 's nachts: %s", cfg.quiet_high_night ? "aan" : "uit");
-    btn(4, 156, 312, 42, b, cfg.quiet_high_night);
+    btn(4, Y(2), 312, 35, b, cfg.quiet_high_night);
     static const char *ASTYLES[3] = {"zacht", "klassiek", "fel"};
     snprintf(b, sizeof(b), "alarmgeluid: %s", ASTYLES[cfg.alarm_style % 3]);
-    btn(4, 204, 312, 42, b, false);
-    // night window hours with -/+
+    btn(4, Y(3), 312, 35, b, false);
     snprintf(b, sizeof(b), "herhaal alarm %ux", cfg.alarm_repeats);
-    gfx->fillRoundRect(4, 250, 224, 40, 8, TH_PANEL);
-    font_med(); gfx->setTextColor(TH_TEXT);
-    gfx->setCursor(14, 250 + 28); gfx->print(b);
-    btn(232, 250, 40, 40, "-", false);
-    btn(276, 250, 40, 40, "+", false);
-    snprintf(b, sizeof(b), "nacht start  %02u:00", cfg.night_start);
-    gfx->fillRoundRect(4, 296, 224, 40, 8, TH_PANEL);
-    gfx->setTextColor(TH_TEXT);
-    gfx->setCursor(14, 296 + 28); gfx->print(b);
-    btn(232, 296, 40, 40, "-", false);
-    btn(276, 296, 40, 40, "+", false);
-    snprintf(b, sizeof(b), "nacht eind   %02u:00", cfg.night_end);
-    gfx->fillRoundRect(4, 342, 224, 40, 8, TH_PANEL);
-    gfx->setTextColor(TH_TEXT);
-    gfx->setCursor(14, 342 + 28); gfx->print(b);
-    btn(232, 342, 40, 40, "-", false);
-    btn(276, 342, 40, 40, "+", false);
-    btn(4, 392, 312, 40, "systeem & testen...", false);
-    btn(4, 438, 312, 40, "terug", true);
+    spin(4, b);
+    snprintf(b, sizeof(b), "helderheid %u%%", cfg.bright_pct);
+    spin(5, b);
+    snprintf(b, sizeof(b), "op accu %u%%", cfg.bright_bat);
+    spin(6, b);
+    snprintf(b, sizeof(b), "nacht start %02u:00", cfg.night_start);
+    spin(7, b);
+    snprintf(b, sizeof(b), "nacht eind %02u:00", cfg.night_end);
+    spin(8, b);
+    btn(4, Y(9), 312, 35, "systeem & testen...", false);
+    btn(4, Y(10), 312, 35, "terug", true);
     gfx->flush();
     wait_tap();
     beep_click(cfg.volume);
-    if (in(4, 60, 312, 42)) cfg.alarm_fast = !cfg.alarm_fast;
-    else if (in(4, 108, 312, 42)) cfg.alarm_nodata = !cfg.alarm_nodata;
-    else if (in(4, 156, 312, 42)) cfg.quiet_high_night = !cfg.quiet_high_night;
-    else if (in(4, 204, 312, 42)) {
+    bool minus = false;
+    int row = -1;
+    for (int i = 4; i <= 8; i++) {
+      if (in(232, Y(i), 40, 35)) { row = i; minus = true; }
+      if (in(276, Y(i), 40, 35)) { row = i; minus = false; }
+    }
+    if (in(4, Y(0), 312, 35)) cfg.alarm_fast = !cfg.alarm_fast;
+    else if (in(4, Y(1), 312, 35)) cfg.alarm_nodata = !cfg.alarm_nodata;
+    else if (in(4, Y(2), 312, 35)) cfg.quiet_high_night = !cfg.quiet_high_night;
+    else if (in(4, Y(3), 312, 35)) {
       cfg.alarm_style = (cfg.alarm_style + 1) % 3;
       beep_alarm_high(cfg.volume);            // instant preview
     }
-    else if (in(232, 250, 40, 40)) cfg.alarm_repeats = max(1, cfg.alarm_repeats - 1);
-    else if (in(276, 250, 40, 40)) cfg.alarm_repeats = min(10, cfg.alarm_repeats + 1);
-    else if (in(232, 296, 40, 40)) cfg.night_start = (cfg.night_start + 23) % 24;
-    else if (in(276, 296, 40, 40)) cfg.night_start = (cfg.night_start + 1) % 24;
-    else if (in(232, 342, 40, 40)) cfg.night_end = (cfg.night_end + 23) % 24;
-    else if (in(276, 342, 40, 40)) cfg.night_end = (cfg.night_end + 1) % 24;
-    else if (in(4, 392, 312, 40)) { config_save(); screen_settings_system(); }
-    else if (in(4, 438, 312, 40)) { config_save(); return; }
+    else if (row == 4) cfg.alarm_repeats = constrain(cfg.alarm_repeats + (minus ? -1 : 1), 1, 10);
+    else if (row == 5) {
+      cfg.bright_pct = constrain((int)cfg.bright_pct + (minus ? -10 : 10), 20, 100);
+      display_backlight(cfg.bright_pct);      // live preview
+    }
+    else if (row == 6) {
+      cfg.bright_bat = constrain((int)cfg.bright_bat + (minus ? -10 : 10), 10, 100);
+      display_backlight(cfg.bright_bat);      // live preview
+    }
+    else if (row == 7) cfg.night_start = (cfg.night_start + (minus ? 23 : 1)) % 24;
+    else if (row == 8) cfg.night_end = (cfg.night_end + (minus ? 23 : 1)) % 24;
+    else if (in(4, Y(9), 312, 35)) { config_save(); screen_settings_system(); }
+    else if (in(4, Y(10), 312, 35)) { config_save(); display_backlight(cfg.bright_pct); return; }
+    if (row != 5 && row != 6) display_backlight(cfg.bright_pct);
     config_save();
   }
 }
@@ -999,6 +1013,8 @@ static void web_settings_form() {
   h += "<label>hoog alarm (mmol/L)</label><input name='high' type='number' step='0.1' min='7' max='20' value='" + String(cfg.high_mmol, 1) + "'>";
   h += "<label>volume: " + String(cfg.volume) + "%</label><input name='vol' type='range' min='10' max='100' step='10' value='" + String(cfg.volume) + "'>";
   h += "<label>nachtdim-niveau: " + String(cfg.dim_pct) + "%</label><input name='dim' type='range' min='5' max='60' step='5' value='" + String(cfg.dim_pct) + "'>";
+  h += "<label>helderheid: " + String(cfg.bright_pct) + "%</label><input name='bright' type='range' min='20' max='100' step='10' value='" + String(cfg.bright_pct) + "'>";
+  h += "<label>helderheid op accu: " + String(cfg.bright_bat) + "%</label><input name='brightb' type='range' min='10' max='100' step='10' value='" + String(cfg.bright_bat) + "'>";
   h += "<label>alarmgeluid</label><select name='astyle'>";
   const char *asty[3] = {"zacht", "klassiek", "fel"};
   for (int i = 0; i < 3; i++)
@@ -1050,6 +1066,8 @@ static void web_settings_save() {
   if (web.hasArg("high")) cfg.high_mmol = constrain(web.arg("high").toFloat(), 7.0f, 20.0f);
   if (web.hasArg("vol"))  cfg.volume    = constrain(web.arg("vol").toInt(), 10, 100);
   if (web.hasArg("dim"))  cfg.dim_pct   = constrain(web.arg("dim").toInt(), 5, 60);
+  if (web.hasArg("bright"))  cfg.bright_pct = constrain(web.arg("bright").toInt(), 20, 100);
+  if (web.hasArg("brightb")) cfg.bright_bat = constrain(web.arg("brightb").toInt(), 10, 100);
   if (web.hasArg("night")) cfg.night_mode = constrain(web.arg("night").toInt(), 0, 2);
   if (web.hasArg("astyle")) cfg.alarm_style = constrain(web.arg("astyle").toInt(), 0, 2);
   if (web.hasArg("areps")) cfg.alarm_repeats = constrain(web.arg("areps").toInt(), 1, 10);
@@ -1128,12 +1146,17 @@ void loop() {
   web.handleClient();
   alarm_pump();
 
-  // Backlight: dim at night (mode 1 and 2), never while out of range, and a
-  // tap buys a minute of full brightness.
+  // Backlight: the configured day brightness, dimmer on battery, dimmest at
+  // night. Alarms and taps always get the full day level -- visibility wins.
   {
     bool night = cfg.night_mode > 0 && is_night();
-    bool full = !night || out_of_range_now() || millis() < wake_until_ms;
-    display_backlight(full ? 100 : cfg.dim_pct);
+    bool attention = out_of_range_now() || millis() < wake_until_ms;
+    uint8_t base = bat_on_battery() ? cfg.bright_bat : cfg.bright_pct;
+    uint8_t bl;
+    if (attention) bl = cfg.bright_pct;
+    else if (night) bl = min(cfg.dim_pct, base);
+    else bl = base;
+    display_backlight(bl);
   }
 
   if (net_ok && (last_fetch_ms == 0 || millis() - last_fetch_ms > 60000)) {

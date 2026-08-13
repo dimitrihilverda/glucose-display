@@ -20,6 +20,8 @@ struct KioskConfig {
   uint8_t volume;       // percent
   uint8_t night_mode;   // at 22:00-07:00: 0 = off, 1 = dim, 2 = amber clock
   uint8_t dim_pct;      // night brightness, percent
+  uint8_t bright_pct;   // day brightness on power, percent
+  uint8_t bright_bat;   // day brightness on battery -- dimmer saves a lot
   uint8_t graph_hours;  // main-graph window: 3, 6, 12 or 24
   uint8_t theme;        // colour+font preset (see THEME_PRESETS)
   uint8_t alarm_style;  // 0 = zacht, 1 = klassiek, 2 = fel
@@ -52,6 +54,8 @@ static void config_load() {
   cfg.volume     = cfg_prefs.getUChar("vol", 70);
   cfg.night_mode = cfg_prefs.getUChar("nmode", 1);
   cfg.dim_pct    = cfg_prefs.getUChar("dimpct", 12);
+  cfg.bright_pct = cfg_prefs.getUChar("bright", 100);
+  cfg.bright_bat = cfg_prefs.getUChar("brightb", 50);
   cfg.graph_hours = cfg_prefs.getUChar("ghours", 3);
   cfg.theme      = cfg_prefs.getUChar("theme", 0);
   cfg.alarm_style = cfg_prefs.getUChar("astyle", 1);
@@ -79,6 +83,8 @@ static void config_save() {
   cfg_prefs.putUChar("vol", cfg.volume);
   cfg_prefs.putUChar("nmode", cfg.night_mode);
   cfg_prefs.putUChar("dimpct", cfg.dim_pct);
+  cfg_prefs.putUChar("bright", cfg.bright_pct);
+  cfg_prefs.putUChar("brightb", cfg.bright_bat);
   cfg_prefs.putUChar("ghours", cfg.graph_hours);
   cfg_prefs.putUChar("theme", cfg.theme);
   cfg_prefs.putUChar("astyle", cfg.alarm_style);

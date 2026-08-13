@@ -73,6 +73,13 @@ static void battery_begin() {
                 bat_present ? String(String(bat_pct) + "%").c_str() : "geen accu");
 }
 
+// On battery = plausible LiPo voltage below charge level. During the first
+// charging phase of a deeply drained battery this can briefly read as
+// on-battery; the only effect is a dimmer screen while it charges.
+static bool bat_on_battery() {
+  return bat_present && bat_volt < 4.15f;
+}
+
 // Small battery glyph with fill level, a bolt while charging.
 static void battery_draw(int x, int y, uint16_t fg, uint16_t warn) {
   if (!bat_present || bat_pct < 0) return;

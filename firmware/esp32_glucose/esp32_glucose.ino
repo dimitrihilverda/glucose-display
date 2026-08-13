@@ -7,7 +7,7 @@
 // NOT A MEDICAL DEVICE. Readings arrive via Dexcom Share with the usual
 // 5-minute cadence; treatment decisions belong on the official Dexcom app.
 
-#define FW_VERSION "1.5"
+#define FW_VERSION "1.6"
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -606,9 +606,9 @@ static void screen_credits() {
     y += 26;
   }
   if (bat_present && bat_pct >= 0) {
-    char bl[40];
-    snprintf(bl, sizeof(bl), "accu: %d%%%s", bat_pct,
-             bat_full ? " (vol)" : (bat_charging ? " (opladen)" : ""));
+    char bl[48];
+    snprintf(bl, sizeof(bl), "accu: %d%% (%.2fV)%s", bat_pct, bat_volt,
+             bat_full ? " vol" : (bat_charging ? " opladen" : ""));
     display_centred(bl, 388, 1, TH_DIM);
   }
   char ip[48];

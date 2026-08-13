@@ -1,55 +1,79 @@
-// Battery telemetry via the IP5306 power-management chip, if this board
-// carries the I2C variant (address 0x75 on the same bus as the touch
-// controller). Level comes in 25% steps (the chip reports its LED states),
-// charging and charge-complete are status bits. Boards with the non-I2C
-// IP5306 simply never ACK the probe and everything here stays silent.
+// Battery telemetry for the JC3248W535C. The battery voltage is wired to
+// GPIO 5 through a divider (measured * 1.72 = VBAT) -- community-verified
+// ESPHome config for this exact board. The IP5306 on this board is the
+// non-I2C variant, so the ADC is the only telemetry there is.
 //
-// Register map as used by M5Stack's IP5306 support:
-//   0x70 bit3 = charger attached / charging
-//   0x71 bit3 = charge complete
-//   0x78 bits 7..4 = level LEDs, active low
+// Level comes from a LiPo discharge curve (linear interpolation between the
+// same calibration points the ESPHome config uses); "charging" is inferred
+// from the voltage sitting at charge level. No battery connected reads out
+// of the plausible window and hides the whole thing.
 #ifndef BATTERY_H
 #define BATTERY_H
 
-#include <Wire.h>
-
-#define IP5306_ADDR 0x75
+#define BAT_ADC_PIN 5
+#define BAT_DIVIDER 1.72f
+#define BAT_WINDOW  8          // rolling average over recent polls
 
 static bool bat_present = false;
 static int bat_pct = -1;
+static float bat_volt = 0.0f;
 static bool bat_charging = false, bat_full = false;
 
-static int bat_reg(uint8_t reg) {
-  Wire.beginTransmission(IP5306_ADDR);
-  Wire.write(reg);
-  if (Wire.endTransmission(false) != 0) return -1;
-  if (Wire.requestFrom((uint8_t)IP5306_ADDR, (uint8_t)1) != 1) return -1;
-  return Wire.read();
+static float bat_win[BAT_WINDOW];
+static int bat_win_n = 0, bat_win_i = 0;
+
+// LiPo curve: voltage -> percent, straight from the community calibration.
+static const float BAT_CURVE[][2] = {
+  { 3.00f, 0.0f }, { 3.35f, 12.0f }, { 3.40f, 20.0f },
+  { 3.60f, 60.0f }, { 4.00f, 90.0f }, { 4.10f, 100.0f },
+};
+#define BAT_POINTS 6
+
+static float bat_curve_pct(float v) {
+  if (v <= BAT_CURVE[0][0]) return 0.0f;
+  if (v >= BAT_CURVE[BAT_POINTS - 1][0]) return 100.0f;
+  for (int i = 1; i < BAT_POINTS; i++) {
+    if (v <= BAT_CURVE[i][0]) {
+      float x0 = BAT_CURVE[i - 1][0], y0 = BAT_CURVE[i - 1][1];
+      float x1 = BAT_CURVE[i][0],     y1 = BAT_CURVE[i][1];
+      return y0 + (v - x0) / (x1 - x0) * (y1 - y0);
+    }
+  }
+  return 100.0f;
+}
+
+// One reading: 16 calibrated samples averaged, times the divider.
+static float bat_read_volt() {
+  uint32_t mv = 0;
+  for (int i = 0; i < 16; i++) mv += analogReadMilliVolts(BAT_ADC_PIN);
+  return (mv / 16) / 1000.0f * BAT_DIVIDER;
+}
+
+static void battery_poll() {
+  float v = bat_read_volt();
+  bat_win[bat_win_i] = v;
+  bat_win_i = (bat_win_i + 1) % BAT_WINDOW;
+  if (bat_win_n < BAT_WINDOW) bat_win_n++;
+  float sum = 0;
+  for (int i = 0; i < bat_win_n; i++) sum += bat_win[i];
+  bat_volt = sum / bat_win_n;
+
+  // outside the plausible LiPo window: probably no battery attached
+  bat_present = (bat_volt >= 2.8f && bat_volt <= 4.45f);
+  if (!bat_present) { bat_pct = -1; return; }
+  bat_pct = (int)(bat_curve_pct(bat_volt) + 0.5f);
+  bat_full = bat_volt >= 4.15f && bat_pct >= 100;
+  bat_charging = bat_volt >= 4.18f && !bat_full;
 }
 
 static void battery_begin() {
-  bat_present = (bat_reg(0x78) >= 0);   // Wire is already up (touch bus)
-  Serial.printf("battery: IP5306 %s\n", bat_present ? "I2C aanwezig" : "niet uitleesbaar");
+  analogReadResolution(12);
+  battery_poll();
+  Serial.printf("battery: adc gpio5 %.2fV -> %s\n", bat_volt,
+                bat_present ? String(String(bat_pct) + "%").c_str() : "geen accu");
 }
 
-// Refresh the cached state; call every so often, not per frame.
-static void battery_poll() {
-  if (!bat_present) return;
-  int r70 = bat_reg(0x70), r71 = bat_reg(0x71), r78 = bat_reg(0x78);
-  if (r70 < 0 || r71 < 0 || r78 < 0) return;
-  bat_full = (r71 & 0x08) != 0;
-  bat_charging = (r70 & 0x08) != 0 && !bat_full;
-  switch (r78 & 0xF0) {                 // LED bits, active low
-    case 0x00: bat_pct = 100; break;
-    case 0x80: bat_pct = 75; break;
-    case 0xC0: bat_pct = 50; break;
-    case 0xE0: bat_pct = 25; break;
-    default:   bat_pct = 0;  break;
-  }
-}
-
-// Small battery glyph with fill level, a bolt while charging. Draws on
-// whatever background; colours passed in so it works on light and dark.
+// Small battery glyph with fill level, a bolt while charging.
 static void battery_draw(int x, int y, uint16_t fg, uint16_t warn) {
   if (!bat_present || bat_pct < 0) return;
   const int w = 30, h = 14;

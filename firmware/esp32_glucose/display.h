@@ -35,7 +35,11 @@ static const ThemePreset &th() { return THEME_PRESETS[cfg.theme % THEME_COUNT]; 
 static uint16_t th_accent()      { return th().main; }
 static uint16_t th_accent_dark() { return th().dark; }
 static const char *th_hex()      { return th().hex; }
-static const char *th_name()     { return th().name; }
+static const char *th_name_i(int i) {
+  static const char *EN[] = { "pink", "purple", "blue", "green", "orange", "red" };
+  return cfg.lang == 1 ? EN[i % THEME_COUNT] : THEME_PRESETS[i % THEME_COUNT].name;
+}
+static const char *th_name()     { return th_name_i(cfg.theme); }
 #define TH_ACCENT th_accent()
 
 #define QSPI_BL   1

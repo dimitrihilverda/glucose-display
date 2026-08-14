@@ -33,15 +33,20 @@ struct KioskConfig {
   bool alarm_nodata;    // alarm when readings stop coming in
   bool quiet_high_night;// suppress the HIGH alarm at night (low always sounds)
   bool accepted;        // disclaimer accepted
+  uint8_t lang;         // 0 = Nederlands, 1 = English; 255 = never chosen
 };
 
 static KioskConfig cfg;
 static Preferences cfg_prefs;
 
+// Every user-visible string passes through TR(); Dutch first, English second.
+// More languages need a wider table AND accented glyphs in the fonts first.
+#define TR(nl, en) (cfg.lang == 1 ? (en) : (nl))
+
 static void config_load() {
   cfg_prefs.begin("glucose", false);
   cfg_prefs.getString("name", cfg.display_name, sizeof(cfg.display_name));
-  if (cfg.display_name[0] == '\0') strcpy(cfg.display_name, "Chantie");
+  if (cfg.display_name[0] == '\0') strcpy(cfg.display_name, "Glucose");
   cfg_prefs.getString("ssid", cfg.wifi_ssid, sizeof(cfg.wifi_ssid));
   cfg_prefs.getString("wpass", cfg.wifi_pass, sizeof(cfg.wifi_pass));
   cfg_prefs.getString("duser", cfg.dex_user, sizeof(cfg.dex_user));
@@ -67,6 +72,7 @@ static void config_load() {
   cfg.alarm_nodata = cfg_prefs.getBool("anodata", true);
   cfg.quiet_high_night = cfg_prefs.getBool("qhigh", true);
   cfg.accepted   = cfg_prefs.getBool("ok", false);
+  cfg.lang       = cfg_prefs.getUChar("lang", 255);
 }
 
 static void config_save() {
@@ -96,6 +102,7 @@ static void config_save() {
   cfg_prefs.putBool("anodata", cfg.alarm_nodata);
   cfg_prefs.putBool("qhigh", cfg.quiet_high_night);
   cfg_prefs.putBool("ok", cfg.accepted);
+  cfg_prefs.putUChar("lang", cfg.lang);
 }
 
 #endif

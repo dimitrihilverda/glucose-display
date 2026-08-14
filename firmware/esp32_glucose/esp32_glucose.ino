@@ -7,7 +7,7 @@
 // NOT A MEDICAL DEVICE. Readings arrive via Dexcom Share with the usual
 // 5-minute cadence; treatment decisions belong on the official Dexcom app.
 
-#define FW_VERSION "1.9"
+#define FW_VERSION "2.0"
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -92,20 +92,37 @@ static void touch_drain(uint32_t ms) {
   touch_irq = false;
 }
 
+// ---- language -------------------------------------------------------------------
+// Asked once, on the very first boot; changeable later in the system menu.
+static void screen_language() {
+  gfx->fillScreen(TH_BG);
+  display_header("taal / language");
+  btn(30, 180, 260, 64, "Nederlands", cfg.lang != 1);
+  btn(30, 268, 260, 64, "English", cfg.lang == 1);
+  gfx->flush();
+  for (;;) {
+    wait_tap();
+    if (in(30, 180, 260, 64)) { cfg.lang = 0; break; }
+    if (in(30, 268, 260, 64)) { cfg.lang = 1; break; }
+  }
+  beep_click(cfg.volume);
+  config_save();
+}
+
 // ---- disclaimer ---------------------------------------------------------------
 static void screen_disclaimer() {
   while (!cfg.accepted) {
     gfx->fillScreen(TH_BG);
     display_header("glucose");
-    display_centred("Dit is GEEN medisch", 110, 2, TH_TEXT);
-    display_centred("hulpmiddel.", 136, 2, TH_TEXT);
+    display_centred(TR("Dit is GEEN medisch", "This is NOT a"), 110, 2, TH_TEXT);
+    display_centred(TR("hulpmiddel.", "medical device."), 136, 2, TH_TEXT);
     font_med();
     gfx->setTextColor(TH_DIM);
-    gfx->setCursor(10, 208); gfx->print("Waarden lopen via Dexcom");
-    gfx->setCursor(10, 244); gfx->print("Share en kunnen achter-");
-    gfx->setCursor(10, 280); gfx->print("lopen. Beslissingen neem");
-    gfx->setCursor(10, 316); gfx->print("je op je officiele app.");
-    btn(60, 360, 200, 60, "begrepen", true);
+    gfx->setCursor(10, 208); gfx->print(TR("Waarden lopen via Dexcom", "Readings come via Dexcom"));
+    gfx->setCursor(10, 244); gfx->print(TR("Share en kunnen achter-", "Share and can lag or be"));
+    gfx->setCursor(10, 280); gfx->print(TR("lopen. Beslissingen neem", "wrong. Treatment decisions"));
+    gfx->setCursor(10, 316); gfx->print(TR("je op je officiele app.", "belong on your official app."));
+    btn(60, 360, 200, 60, TR("begrepen", "understood"), true);
     gfx->flush();
     wait_tap();
     if (in(60, 360, 200, 60)) {
@@ -120,7 +137,7 @@ static void screen_disclaimer() {
 static bool wifi_connect_ui(const char *ssid, const char *pass) {
   gfx->fillScreen(TH_BG);
   display_header("wifi");
-  display_centred("verbinden met", 200, 2, TH_DIM);
+  display_centred(TR("verbinden met", "connecting to"), 200, 2, TH_DIM);
   char nm[25];
   strncpy(nm, ssid, 24); nm[24] = '\0';
   display_centred(nm, 230, 2, TH_TEXT);
@@ -139,7 +156,7 @@ static void screen_wifi_setup() {
   for (;;) {
     gfx->fillScreen(TH_BG);
     display_header("wifi");
-    display_centred("netwerken zoeken...", 150, 2, TH_DIM);
+    display_centred(TR("netwerken zoeken...", "scanning networks..."), 150, 2, TH_DIM);
     gfx->flush();
     // A scan fails (negative code) while the station is still retrying a
     // stored network. Stop it, settle, then scan.
@@ -154,10 +171,10 @@ static void screen_wifi_setup() {
     display_header("wifi");
     font_med();
     gfx->setTextColor(TH_DIM);
-    gfx->setCursor(MARGIN, 78); gfx->print("kies je netwerk:");
+    gfx->setCursor(MARGIN, 78); gfx->print(TR("kies je netwerk:", "pick your network:"));
     int shown = min(n, 8);
     if (shown == 0)
-      display_centred("geen netwerken gevonden", 200, 2, GL_LOW);
+      display_centred(TR("geen netwerken gevonden", "no networks found"), 200, 2, GL_LOW);
     for (int i = 0; i < shown; i++) {
       int y = 90 + i * 42;
       gfx->fillRoundRect(4, y, 312, 36, 6, TH_PANEL);
@@ -172,7 +189,7 @@ static void screen_wifi_setup() {
         gfx->fillRect(272 + b * 9, y + 26 - b * 5, 6, 5 + b * 5,
                       b < bars ? TH_ACCENT : TH_BG);
     }
-    btn(4, 430, 312, 44, "opnieuw zoeken", false);
+    btn(4, 430, 312, 44, TR("opnieuw zoeken", "scan again"), false);
     gfx->flush();
     wait_tap();
     if (in(4, 430, 312, 44)) { beep_click(cfg.volume); continue; }
@@ -192,7 +209,7 @@ static void screen_wifi_setup() {
         }
         pass[0] = '\0';
       }
-      if (!open_net && !kb_input("wifi-wachtwoord:", pass, sizeof(pass), true))
+      if (!open_net && !kb_input(TR("wifi-wachtwoord:", "wifi password:"), pass, sizeof(pass), true))
         break;
       if (wifi_connect_ui(ssid, pass)) {
         strcpy(cfg.wifi_ssid, ssid);
@@ -203,8 +220,8 @@ static void screen_wifi_setup() {
       }
       gfx->fillScreen(TH_BG);
       display_header("wifi");
-      display_centred("verbinden mislukt", 210, 2, GL_LOW);
-      display_centred("(tik voor opnieuw)", 250, 2, TH_DIM);
+      display_centred(TR("verbinden mislukt", "connection failed"), 210, 2, GL_LOW);
+      display_centred(TR("(tik voor opnieuw)", "(tap to retry)"), 250, 2, TH_DIM);
       gfx->flush();
       wait_tap();
       break;
@@ -219,16 +236,17 @@ static void screen_dex_login() {
     display_header("dexcom");
     font_small();
     gfx->setTextColor(TH_DIM);
-    gfx->setCursor(MARGIN, 76); gfx->print("log in met je Dexcom-account");
-    gfx->setCursor(MARGIN, 100); gfx->print("(Share aan + minstens 1 volger)");
+    gfx->setCursor(MARGIN, 76); gfx->print(TR("log in met je Dexcom-account", "sign in with your Dexcom account"));
+    gfx->setCursor(MARGIN, 100); gfx->print(TR("(Share aan + minstens 1 volger)", "(Share on + at least 1 follower)"));
 
     char ubtn[26];
-    snprintf(ubtn, sizeof(ubtn), "%s", cfg.dex_user[0] ? cfg.dex_user : "gebruikersnaam...");
+    snprintf(ubtn, sizeof(ubtn), "%s", cfg.dex_user[0] ? cfg.dex_user : TR("gebruikersnaam...", "username..."));
     if (strlen(ubtn) > 22) strcpy(ubtn + 19, "...");
     btn(4, 150, 312, 48, ubtn, false);
-    btn(4, 206, 312, 48, cfg.dex_pass[0] ? "wachtwoord: ******" : "wachtwoord...", false);
-    btn(4, 262, 150, 48, cfg.region_ous ? "server: EU" : "server: VS", false);
-    btn(4, 340, 312, 56, "inloggen", true);
+    btn(4, 206, 312, 48, cfg.dex_pass[0] ? TR("wachtwoord: ******", "password: ******")
+                                         : TR("wachtwoord...", "password..."), false);
+    btn(4, 262, 150, 48, cfg.region_ous ? TR("server: EU", "server: non-US") : TR("server: VS", "server: US"), false);
+    btn(4, 340, 312, 56, TR("inloggen", "sign in"), true);
     if (dex_last_error[0]) {
       font_px(1);
       gfx->setTextColor(GL_LOW, TH_BG);
@@ -239,10 +257,10 @@ static void screen_dex_login() {
     wait_tap();
     if (in(4, 150, 312, 48)) {
       beep_click(cfg.volume);
-      kb_input("dexcom gebruikersnaam:", cfg.dex_user, sizeof(cfg.dex_user), false);
+      kb_input(TR("dexcom gebruikersnaam:", "dexcom username:"), cfg.dex_user, sizeof(cfg.dex_user), false);
     } else if (in(4, 206, 312, 48)) {
       beep_click(cfg.volume);
-      kb_input("dexcom wachtwoord:", cfg.dex_pass, sizeof(cfg.dex_pass), true);
+      kb_input(TR("dexcom wachtwoord:", "dexcom password:"), cfg.dex_pass, sizeof(cfg.dex_pass), true);
     } else if (in(4, 262, 150, 48)) {
       beep_click(cfg.volume);
       cfg.region_ous = !cfg.region_ous;
@@ -250,7 +268,7 @@ static void screen_dex_login() {
       beep_click(cfg.volume);
       gfx->fillScreen(TH_BG);
       display_header("dexcom");
-      display_centred("inloggen...", 230, 2, TH_DIM);
+      display_centred(TR("inloggen...", "signing in..."), 230, 2, TH_DIM);
       gfx->flush();
       if (dex_login()) {
         config_save();
@@ -302,16 +320,18 @@ static void draw_main() {
   draw_name(12, 44, DX_PINK, DX_PINKD);
   battery_draw(SCR_W - 42, 12, DX_GRAY, DX_RED);
   if (!net_ok) {
+    const char *nw = TR("geen wifi", "no wifi");
     font_small();
     gfx->setTextColor(DX_RED);
-    gfx->setCursor(SCR_W - text_w("geen wifi") - 6, 48);
-    gfx->print("geen wifi");
+    gfx->setCursor(SCR_W - text_w(nw) - 6, 48);
+    gfx->print(nw);
   }
 
   if (hist_n == 0) {
     font_med();
     gfx->setTextColor(DX_GRAY);
-    const char *m = dex_ok ? "wachten op data..." : "geen Dexcom-verbinding";
+    const char *m = dex_ok ? TR("wachten op data...", "waiting for data...")
+                           : TR("geen Dexcom-verbinding", "no Dexcom connection");
     gfx->setCursor((SCR_W - text_w(m)) / 2, 170);
     gfx->print(m);
     if (dex_last_error[0]) {
@@ -355,7 +375,7 @@ static void draw_main() {
   draw_trend_arrow(ccx + R + 42, ccy, stale ? -1 : cur.trend, DX_TEXT);
 
   char sub[32];
-  snprintf(sub, sizeof(sub), "%d min geleden", age_min);
+  snprintf(sub, sizeof(sub), TR("%d min geleden", "%d min ago"), age_min);
   if (stale) { font_med(); gfx->setTextColor(DX_RED); }
   else { font_small(); gfx->setTextColor(DX_GRAY); }
   gfx->setCursor((SCR_W - text_w(sub)) / 2, 278);
@@ -371,7 +391,7 @@ static void draw_main() {
   font_small();
   gfx->setTextColor(DX_GRAY);
   char wt[8];
-  snprintf(wt, sizeof(wt), "%uu", cfg.graph_hours);
+  snprintf(wt, sizeof(wt), TR("%uu", "%uh"), cfg.graph_hours);
   gfx->setCursor(cx0 + 10, cy0 + 20);
   gfx->print(wt);
 
@@ -413,7 +433,7 @@ static void draw_main() {
     gfx->print(lb);
   }
   gfx->setCursor(gx1 - 12, gy1 + 8);
-  gfx->print("Nu");
+  gfx->print(TR("Nu", "now"));
 
   for (int i = hist_n - 1; i >= 0; i--) {
     if (hist[i].t < t0) continue;
@@ -436,10 +456,11 @@ static void draw_main() {
 static void draw_night() {
   gfx->fillScreen(0x0000);
   if (hist_n == 0) {
+    const char *nd = TR("geen data", "no data");
     font_med();
     gfx->setTextColor(NT_AMBER);
-    gfx->setCursor((SCR_W - text_w("geen data")) / 2, 240);
-    gfx->print("geen data");
+    gfx->setCursor((SCR_W - text_w(nd)) / 2, 240);
+    gfx->print(nd);
     gfx->flush();
     return;
   }
@@ -455,10 +476,11 @@ static void draw_night() {
   gfx->print(val);
   draw_trend_arrow(SCR_W / 2, 290, stale ? -1 : cur.trend, NT_AMBER);
   if (stale) {
+    const char *st = TR("data is verouderd", "data is stale");
     font_small();
     gfx->setTextColor(DX_RED);
-    gfx->setCursor((SCR_W - text_w("data is verouderd")) / 2, 350);
-    gfx->print("data is verouderd");
+    gfx->setCursor((SCR_W - text_w(st)) / 2, 350);
+    gfx->print(st);
   }
   gfx->flush();
 }
@@ -485,13 +507,14 @@ static void screen_stats() {
     }
     gfx->fillScreen(DX_BG);
     draw_name(12, 44, DX_PINK, DX_PINKD);
+    const char *h24 = TR("24 uur", "24 hours");
     font_med();
     gfx->setTextColor(DX_GRAY);
-    gfx->setCursor(SCR_W - text_w("24 uur") - 8, 36);
-    gfx->print("24 uur");
+    gfx->setCursor(SCR_W - text_w(h24) - 8, 36);
+    gfx->print(h24);
 
     if (n == 0) {
-      display_centred("nog geen data", 200, 2, DX_GRAY);
+      display_centred(TR("nog geen data", "no data yet"), 200, 2, DX_GRAY);
     } else {
       int pin = 100 * (n - nlow - nhigh) / n;
       int plow = 100 * nlow / n;
@@ -506,9 +529,9 @@ static void screen_stats() {
       if (whigh) gfx->fillRect(bx + wlow + win_, by, whigh, bh, DX_YEL);
       font_small();
       gfx->setTextColor(DX_GRAY);
-      gfx->setCursor(bx, by + bh + 20); gfx->print("laag");
-      gfx->setCursor(bx + bw / 2 - 20, by + bh + 20); gfx->print("in bereik");
-      gfx->setCursor(bx + bw - 30, by + bh + 20); gfx->print("hoog");
+      gfx->setCursor(bx, by + bh + 20); gfx->print(TR("laag", "low"));
+      gfx->setCursor(bx + bw / 2 - 20, by + bh + 20); gfx->print(TR("in bereik", "in range"));
+      gfx->setCursor(bx + bw - 30, by + bh + 20); gfx->print(TR("hoog", "high"));
       char pct[8];
       font_med();
       gfx->setTextColor(DX_TEXT);
@@ -521,7 +544,9 @@ static void screen_stats() {
 
       // stat rows
       struct { const char *label; float v; } st[3] = {
-        { "gemiddeld", sum / n }, { "laagste", mn }, { "hoogste", mx },
+        { TR("gemiddeld", "average"), sum / n },
+        { TR("laagste", "lowest"), mn },
+        { TR("hoogste", "highest"), mx },
       };
       for (int i = 0; i < 3; i++) {
         int y = 190 + i * 52;
@@ -536,15 +561,15 @@ static void screen_stats() {
         gfx->setCursor(SCR_W - 28 - text_w(v), y + 30); gfx->print(v);
       }
       char le[36];
-      snprintf(le, sizeof(le), "%d keer laag geweest", low_events);
+      snprintf(le, sizeof(le), TR("%d keer laag geweest", "went low %d times"), low_events);
       display_centred(le, 352, 1, low_events ? DX_RED : DX_GRAY);
     }
 
     char wb[24];
-    snprintf(wb, sizeof(wb), "grafiek: %u uur", cfg.graph_hours);
+    snprintf(wb, sizeof(wb), TR("grafiek: %u uur", "graph: %u hours"), cfg.graph_hours);
     // dark buttons read fine on the light page too
     btn(16, 396, 180, 44, wb, false);
-    btn(220, 396, 84, 44, "terug", true);
+    btn(220, 396, 84, 44, TR("terug", "back"), true);
     gfx->flush();
     wait_tap();
     beep_click(cfg.volume);
@@ -577,20 +602,21 @@ static void screen_greeting() {
   gfx->fillScreen(DX_BG);
   font_med();
   gfx->setTextColor(DX_GRAY);
-  gfx->setCursor((SCR_W - text_w("Goedemorgen")) / 2, 140);
-  gfx->print("Goedemorgen");
+  const char *gm = TR("Goedemorgen", "Good morning");
+  gfx->setCursor((SCR_W - text_w(gm)) / 2, 140);
+  gfx->print(gm);
   font_script();
   gfx->setTextColor(DX_PINK);
   gfx->setCursor((SCR_W - text_w(cfg.display_name)) / 2 - 10, 210);
   gfx->print(cfg.display_name);
   draw_heart(SCR_W / 2 + text_w(cfg.display_name) / 2 + 12, 198, 8, DX_PINKD);
   if (mx > 0) {
-    display_centred("vannacht tussen", 248, 2, DX_TEXT);
+    display_centred(TR("vannacht tussen", "overnight between"), 248, 2, DX_TEXT);
     char s[24];
-    snprintf(s, sizeof(s), "%.1f en %.1f", mn, mx);
+    snprintf(s, sizeof(s), TR("%.1f en %.1f", "%.1f and %.1f"), mn, mx);
     display_centred(s, 284, 2, DX_TEXT);
   }
-  display_centred("fijne dag!", 330, 1, DX_GRAY);
+  display_centred(TR("fijne dag!", "have a lovely day!"), 330, 1, DX_GRAY);
   gfx->flush();
   wait_tap_for(30000);
   touch_irq = false;
@@ -602,19 +628,19 @@ static void screen_credits() {
   draw_name((SCR_W - text_w(cfg.display_name)) / 2 - 10, 70, TH_ACCENT, TH_ACCENT);
   display_centred("glucose-display", 92, 2, TH_TEXT);
   char v[24];
-  snprintf(v, sizeof(v), "versie %s", FW_VERSION);
+  snprintf(v, sizeof(v), TR("versie %s", "version %s"), FW_VERSION);
   display_centred(v, 122, 1, TH_DIM);
   font_small();
   gfx->setTextColor(TH_DIM);
   int y = 180;
   const char *lines[] = {
-    "met liefde gebouwd door",
+    TR("met liefde gebouwd door", "built with love by"),
     "Dimitri & Claude",
     "",
     "data: Dexcom Share",
     "board: JC3248W535C (ESP32-S3)",
     "",
-    "geen medisch hulpmiddel",
+    TR("geen medisch hulpmiddel", "not a medical device"),
   };
   for (auto l : lines) {
     gfx->setTextColor(strcmp(l, "Dimitri & Claude") == 0 ? TH_TEXT : TH_DIM);
@@ -624,17 +650,20 @@ static void screen_credits() {
   }
   if (bat_present && bat_pct >= 0) {
     char bl[48];
-    snprintf(bl, sizeof(bl), "accu: %d%% (%.2fV) %s - scherm %u%%", bat_pct, bat_volt,
-             bat_full ? "vol" : (bat_charging ? "opladen"
-                       : (bat_on_battery() ? "op accu" : "op lader")), backlight_now);
+    snprintf(bl, sizeof(bl), TR("accu: %d%% (%.2fV) %s - scherm %u%%",
+                                "battery: %d%% (%.2fV) %s - screen %u%%"), bat_pct, bat_volt,
+             bat_full ? TR("vol", "full") : (bat_charging ? TR("opladen", "charging")
+                       : (bat_on_battery() ? TR("op accu", "on battery") : TR("op lader", "on power"))),
+             backlight_now);
     display_centred(bl, 398, 1, TH_DIM);
   }
   char ip[48];
-  snprintf(ip, sizeof(ip), "op je telefoon: http://%s", WiFi.localIP().toString().c_str());
+  snprintf(ip, sizeof(ip), TR("op je telefoon: http://%s", "on your phone: http://%s"),
+           WiFi.localIP().toString().c_str());
   display_centred(ip, 350, 1, TH_ACCENT);
   snprintf(ip, sizeof(ip), "web-login: display / %s", cfg.web_pass);
   display_centred(ip, 374, 1, TH_TEXT);
-  btn(60, 428, 200, 46, "terug", true);
+  btn(60, 428, 200, 46, TR("terug", "back"), true);
   gfx->flush();
   wait_tap();
   beep_click(cfg.volume);
@@ -646,16 +675,16 @@ static void screen_credits() {
 static void screen_test() {
   for (;;) {
     gfx->fillScreen(TH_BG);
-    display_header("testen");
-    btn(4, 62, 152, 52, "klik", false);
+    display_header(TR("testen", "tests"));
+    btn(4, 62, 152, 52, TR("klik", "click"), false);
     btn(164, 62, 152, 52, "chime", false);
-    btn(4, 122, 152, 52, "laag alarm", false);
-    btn(164, 122, 152, 52, "hoog alarm", false);
-    btn(4, 182, 152, 52, "snel-dalend", false);
-    btn(164, 182, 152, 52, "geen-data", false);
-    btn(4, 258, 312, 48, "nachtklok bekijken", false);
-    btn(4, 314, 312, 48, "goedemorgen bekijken", false);
-    btn(4, 412, 312, 48, "terug", true);
+    btn(4, 122, 152, 52, TR("laag alarm", "low alarm"), false);
+    btn(164, 122, 152, 52, TR("hoog alarm", "high alarm"), false);
+    btn(4, 182, 152, 52, TR("snel-dalend", "fast drop"), false);
+    btn(164, 182, 152, 52, TR("geen-data", "no data"), false);
+    btn(4, 258, 312, 48, TR("nachtklok bekijken", "preview night clock"), false);
+    btn(4, 314, 312, 48, TR("goedemorgen bekijken", "preview good morning"), false);
+    btn(4, 412, 312, 48, TR("terug", "back"), true);
     gfx->flush();
     wait_tap();
     if (in(4, 62, 152, 52)) beep_click(cfg.volume);
@@ -676,6 +705,13 @@ static void screen_test() {
   }
 }
 
+// One place for the alarm-style names, shared by screen and web form.
+static const char *alarm_style_name(int i) {
+  static const char *NL[3] = {"zacht", "klassiek", "fel"};
+  static const char *EN[3] = {"soft", "classic", "loud"};
+  return (cfg.lang == 1 ? EN : NL)[i % 3];
+}
+
 // Generate a fresh web password: short, unambiguous, shown only on the
 // device's credits screen.
 static void web_pass_generate() {
@@ -691,26 +727,31 @@ static void web_pass_generate() {
 static void screen_settings_system() {
   for (;;) {
     gfx->fillScreen(TH_BG);
-    display_header("systeem");
-    btn(4, 62, 312, 46, "naam wijzigen", false);
-    btn(4, 116, 312, 46, "dexcom-login wijzigen", false);
-    btn(4, 170, 312, 46, "wifi wijzigen", false);
-    btn(4, 224, 312, 46, "testen...", false);
-    btn(4, 278, 312, 46, "nieuw web-wachtwoord", false);
-    btn(4, 332, 312, 46, "over dit display", false);
-    btn(4, 420, 312, 46, "terug", true);
+    display_header(TR("systeem", "system"));
+    char lb[28];
+    snprintf(lb, sizeof(lb), "%s", TR("taal: Nederlands", "language: English"));
+    btn(4, 54, 312, 44, TR("naam wijzigen", "change name"), false);
+    btn(4, 104, 312, 44, lb, false);
+    btn(4, 154, 312, 44, TR("dexcom-login wijzigen", "change dexcom login"), false);
+    btn(4, 204, 312, 44, TR("wifi wijzigen", "change wifi"), false);
+    btn(4, 254, 312, 44, TR("testen...", "tests..."), false);
+    btn(4, 304, 312, 44, TR("nieuw web-wachtwoord", "new web password"), false);
+    btn(4, 354, 312, 44, TR("over dit display", "about this display"), false);
+    btn(4, 420, 312, 46, TR("terug", "back"), true);
     gfx->flush();
     wait_tap();
     beep_click(cfg.volume);
-    if (in(4, 62, 312, 46)) {
-      kb_input("naam op het display:", cfg.display_name, sizeof(cfg.display_name), false);
-      if (cfg.display_name[0] == '\0') strcpy(cfg.display_name, "Chantie");
+    if (in(4, 54, 312, 44)) {
+      kb_input(TR("naam op het display:", "name on the display:"),
+               cfg.display_name, sizeof(cfg.display_name), false);
+      if (cfg.display_name[0] == '\0') strcpy(cfg.display_name, "Glucose");
     }
-    else if (in(4, 116, 312, 46)) { config_save(); screen_dex_login(); }
-    else if (in(4, 170, 312, 46)) { config_save(); screen_wifi_setup(); }
-    else if (in(4, 224, 312, 46)) screen_test();
-    else if (in(4, 278, 312, 46)) { web_pass_generate(); screen_credits(); }
-    else if (in(4, 332, 312, 46)) screen_credits();
+    else if (in(4, 104, 312, 44)) cfg.lang = (cfg.lang == 1) ? 0 : 1;
+    else if (in(4, 154, 312, 44)) { config_save(); screen_dex_login(); }
+    else if (in(4, 204, 312, 44)) { config_save(); screen_wifi_setup(); }
+    else if (in(4, 254, 312, 44)) screen_test();
+    else if (in(4, 304, 312, 44)) { web_pass_generate(); screen_credits(); }
+    else if (in(4, 354, 312, 44)) screen_credits();
     else if (in(4, 420, 312, 60)) { config_save(); return; }
     config_save();
   }
@@ -719,7 +760,7 @@ static void screen_settings_system() {
 static void screen_settings_more() {
   for (;;) {
     gfx->fillScreen(TH_BG);
-    display_header("meer");
+    display_header(TR("meer", "more"));
     char b[40];
     auto Y = [](int i) { return 48 + i * 39; };
     auto spin = [&](int i, const char *label) {
@@ -732,27 +773,28 @@ static void screen_settings_more() {
       btn(232, y, 40, 35, "-", false);
       btn(276, y, 40, 35, "+", false);
     };
-    snprintf(b, sizeof(b), "snel-dalend alarm: %s", cfg.alarm_fast ? "aan" : "uit");
+    const char *on = TR("aan", "on"), *off = TR("uit", "off");
+    snprintf(b, sizeof(b), TR("snel-dalend alarm: %s", "fast-drop alarm: %s"), cfg.alarm_fast ? on : off);
     btn(4, Y(0), 312, 35, b, cfg.alarm_fast);
-    snprintf(b, sizeof(b), "geen-data alarm: %s", cfg.alarm_nodata ? "aan" : "uit");
+    snprintf(b, sizeof(b), TR("geen-data alarm: %s", "no-data alarm: %s"), cfg.alarm_nodata ? on : off);
     btn(4, Y(1), 312, 35, b, cfg.alarm_nodata);
-    snprintf(b, sizeof(b), "hoog stil 's nachts: %s", cfg.quiet_high_night ? "aan" : "uit");
+    snprintf(b, sizeof(b), TR("hoog stil 's nachts: %s", "high quiet at night: %s"), cfg.quiet_high_night ? on : off);
     btn(4, Y(2), 312, 35, b, cfg.quiet_high_night);
-    static const char *ASTYLES[3] = {"zacht", "klassiek", "fel"};
-    snprintf(b, sizeof(b), "alarmgeluid: %s", ASTYLES[cfg.alarm_style % 3]);
+    const char *astyle = alarm_style_name(cfg.alarm_style);
+    snprintf(b, sizeof(b), TR("alarmgeluid: %s", "alarm sound: %s"), astyle);
     btn(4, Y(3), 312, 35, b, false);
-    snprintf(b, sizeof(b), "herhaal alarm %ux", cfg.alarm_repeats);
+    snprintf(b, sizeof(b), TR("herhaal alarm %ux", "repeat alarm %ux"), cfg.alarm_repeats);
     spin(4, b);
-    snprintf(b, sizeof(b), "helderheid %u%%", cfg.bright_pct);
+    snprintf(b, sizeof(b), TR("helderheid %u%%", "brightness %u%%"), cfg.bright_pct);
     spin(5, b);
-    snprintf(b, sizeof(b), "op accu %u%%", cfg.bright_bat);
+    snprintf(b, sizeof(b), TR("op accu %u%%", "on battery %u%%"), cfg.bright_bat);
     spin(6, b);
-    snprintf(b, sizeof(b), "nacht start %02u:00", cfg.night_start);
+    snprintf(b, sizeof(b), TR("nacht start %02u:00", "night start %02u:00"), cfg.night_start);
     spin(7, b);
-    snprintf(b, sizeof(b), "nacht eind %02u:00", cfg.night_end);
+    snprintf(b, sizeof(b), TR("nacht eind %02u:00", "night end %02u:00"), cfg.night_end);
     spin(8, b);
-    btn(4, Y(9), 312, 35, "systeem & testen...", false);
-    btn(4, Y(10), 312, 35, "terug", true);
+    btn(4, Y(9), 312, 35, TR("systeem & testen...", "system & tests..."), false);
+    btn(4, Y(10), 312, 35, TR("terug", "back"), true);
     gfx->flush();
     wait_tap();
     beep_click(cfg.volume);
@@ -790,15 +832,15 @@ static void screen_settings_more() {
 static void screen_settings() {
   for (;;) {
     gfx->fillScreen(TH_BG);
-    display_header("opties");
+    display_header(TR("opties", "options"));
     char b[36];
     struct Row { const char *label; char val[16]; } rows[6];
-    snprintf(rows[0].val, 16, "%s", cfg.use_mmol ? "mmol/L" : "mg/dL"); rows[0].label = "eenheid";
-    snprintf(rows[1].val, 16, "%.1f", cfg.low_mmol);   rows[1].label = "laag";
-    snprintf(rows[2].val, 16, "%.1f", cfg.high_mmol);  rows[2].label = "hoog";
+    snprintf(rows[0].val, 16, "%s", cfg.use_mmol ? "mmol/L" : "mg/dL"); rows[0].label = TR("eenheid", "unit");
+    snprintf(rows[1].val, 16, "%.1f", cfg.low_mmol);   rows[1].label = TR("laag", "low");
+    snprintf(rows[2].val, 16, "%.1f", cfg.high_mmol);  rows[2].label = TR("hoog", "high");
     snprintf(rows[3].val, 16, "%u%%", cfg.volume);     rows[3].label = "volume";
     snprintf(rows[4].val, 16, "%u%%", cfg.dim_pct);    rows[4].label = "dim";
-    snprintf(rows[5].val, 16, "%s", th_name());        rows[5].label = "kleur";
+    snprintf(rows[5].val, 16, "%s", th_name());        rows[5].label = TR("kleur", "colour");
     for (int i = 0; i < 6; i++) {
       int y = 54 + i * 40;
       gfx->fillRoundRect(4, y, 224, 36, 8, TH_PANEL);
@@ -810,16 +852,17 @@ static void screen_settings() {
       btn(232, y, 40, 36, "-", false);
       btn(276, y, 40, 36, "+", false);
     }
-    snprintf(b, sizeof(b), "alarmen: %s", cfg.alarms_on ? "aan" : "uit");
+    snprintf(b, sizeof(b), TR("alarmen: %s", "alarms: %s"),
+             cfg.alarms_on ? TR("aan", "on") : TR("uit", "off"));
     btn(4, 54 + 6 * 40, 312, 36, b, cfg.alarms_on);
     char nm[36];
-    if (cfg.night_mode == 0) snprintf(nm, sizeof(nm), "nacht: uit");
-    else snprintf(nm, sizeof(nm), "nacht: %s (%02u-%02u)",
-                  cfg.night_mode == 1 ? "dimmen" : "klok",
+    if (cfg.night_mode == 0) snprintf(nm, sizeof(nm), TR("nacht: uit", "night: off"));
+    else snprintf(nm, sizeof(nm), TR("nacht: %s (%02u-%02u)", "night: %s (%02u-%02u)"),
+                  cfg.night_mode == 1 ? TR("dimmen", "dim") : TR("klok", "clock"),
                   cfg.night_start, cfg.night_end);
     btn(4, 54 + 7 * 40, 312, 36, nm, cfg.night_mode > 0);
-    btn(4, 54 + 8 * 40, 312, 36, "meer opties...", false);
-    btn(4, 54 + 9 * 40, 312, 36, "terug", true);
+    btn(4, 54 + 8 * 40, 312, 36, TR("meer opties...", "more options..."), false);
+    btn(4, 54 + 9 * 40, 312, 36, TR("terug", "back"), true);
     gfx->flush();
     wait_tap();
     beep_click(cfg.volume);
@@ -956,7 +999,7 @@ static const char *trend_arrow_txt(int8_t t) {
 
 static void web_root() {
   if (!web_guard()) return;
-  String h = "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
+  String h = String("<!doctype html><html lang='") + TR("nl", "en") + "'><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
     "<meta http-equiv='refresh' content='60'>"
     "<title>" + String(cfg.display_name) + "</title><style>"
@@ -975,17 +1018,22 @@ static void web_root() {
     const char *col = v < cfg.low_mmol ? "#ff6060" : (v > cfg.high_mmol ? "#ffcc00" : "#fff");
     h += "<div class='v' style='color:" + String(col) + "'>" + val + "</div>";
     h += "<div class='t'>" + String(trend_arrow_txt(hist[0].trend)) + "</div>";
-    h += "<p class='" + String(age > 12 ? "warn" : "g") + "'>" + String(age) + " min geleden &middot; "
+    h += "<p class='" + String(age > 12 ? "warn" : "g") + "'>" + String(age)
+       + TR(" min geleden &middot; ", " min ago &middot; ")
        + (cfg.use_mmol ? "mmol/L" : "mg/dL") + "</p>";
   } else {
-    h += "<p class='g'>nog geen data</p>";
+    h += String("<p class='g'>") + TR("nog geen data", "no data yet") + "</p>";
   }
   if (bat_present && bat_pct >= 0) {
-    h += "<p class='g'>accu " + String(bat_pct) + "%" +
-         (bat_full ? " (vol)" : (bat_charging ? " &#9889; opladen" : "")) + "</p>";
+    h += String("<p class='g'>") + TR("accu ", "battery ") + String(bat_pct) + "%" +
+         (bat_full ? TR(" (vol)", " (full)")
+                   : (bat_charging ? TR(" &#9889; opladen", " &#9889; charging") : "")) + "</p>";
   }
-  h += "<p><a href='/instellingen' style='color:" + String(th_hex()) + "'>instellingen</a></p>";
-  h += "<small>geen medisch hulpmiddel &middot; ververst elke minuut</small></body></html>";
+  h += String("<p><a href='") + TR("/instellingen", "/settings") + "' style='color:" + String(th_hex())
+     + "'>" + TR("instellingen", "settings") + "</a></p>";
+  h += String("<small>") + TR("geen medisch hulpmiddel &middot; ververst elke minuut",
+                              "not a medical device &middot; refreshes every minute")
+     + "</small></body></html>";
   web.send(200, "text/html", h);
 }
 
@@ -1010,9 +1058,9 @@ static void render();                    // defined below, used after a save
 
 static void web_settings_form() {
   if (!web_guard()) return;
-  String h = "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
+  String h = String("<!doctype html><html lang='") + TR("nl", "en") + "'><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>instellingen</title><style>"
+    "<title>" + String(TR("instellingen", "settings")) + "</title><style>"
     "body{background:#101820;color:#fff;font-family:system-ui;max-width:26em;margin:0 auto;padding:1em}"
     "h1{color:" + String(th_hex()) + "}label{display:block;margin:.9em 0 .25em;color:#90a0ac}"
     "input,select{width:100%;padding:.5em;border-radius:8px;border:0;background:#33475B;color:#fff;font-size:1em}"
@@ -1020,49 +1068,55 @@ static void web_settings_form() {
     ".row{margin:.6em 0}.ok{color:#7be07b}"
     "button{margin-top:1.2em;width:100%;padding:.8em;border:0;border-radius:10px;"
     "background:" + String(th_hex()) + ";color:#101820;font-size:1.1em;font-weight:700}"
-    "a{color:" + String(th_hex()) + "}</style></head><body><h1>instellingen</h1>";
-  if (web.hasArg("ok")) h += "<p class='ok'>opgeslagen &#10003;</p>";
-  h += "<form method='post' action='/instellingen'>";
-  h += "<label>naam op het display</label><input name='name' maxlength='24' value='" + String(cfg.display_name) + "'>";
-  h += "<label>eenheid</label><select name='unit'>";
+    "a{color:" + String(th_hex()) + "}</style></head><body><h1>"
+    + TR("instellingen", "settings") + "</h1>";
+  if (web.hasArg("ok")) h += String("<p class='ok'>") + TR("opgeslagen", "saved") + " &#10003;</p>";
+  h += String("<form method='post' action='") + TR("/instellingen", "/settings") + "'>";
+  h += "<label>taal / language</label><select name='lang'>";
+  h += String("<option value='0'") + (cfg.lang != 1 ? " selected" : "") + ">Nederlands</option>";
+  h += String("<option value='1'") + (cfg.lang == 1 ? " selected" : "") + ">English</option></select>";
+  h += String("<label>") + TR("naam op het display", "name on the display")
+     + "</label><input name='name' maxlength='24' value='" + String(cfg.display_name) + "'>";
+  h += String("<label>") + TR("eenheid", "unit") + "</label><select name='unit'>";
   h += String("<option value='mmol'") + (cfg.use_mmol ? " selected" : "") + ">mmol/L</option>";
   h += String("<option value='mgdl'") + (!cfg.use_mmol ? " selected" : "") + ">mg/dL</option></select>";
-  h += "<label>laag alarm (mmol/L)</label><input name='low' type='number' step='0.1' min='3' max='6.5' value='" + String(cfg.low_mmol, 1) + "'>";
-  h += "<label>hoog alarm (mmol/L)</label><input name='high' type='number' step='0.1' min='7' max='20' value='" + String(cfg.high_mmol, 1) + "'>";
+  h += String("<label>") + TR("laag alarm (mmol/L)", "low alarm (mmol/L)") + "</label><input name='low' type='number' step='0.1' min='3' max='6.5' value='" + String(cfg.low_mmol, 1) + "'>";
+  h += String("<label>") + TR("hoog alarm (mmol/L)", "high alarm (mmol/L)") + "</label><input name='high' type='number' step='0.1' min='7' max='20' value='" + String(cfg.high_mmol, 1) + "'>";
   h += "<label>volume: " + String(cfg.volume) + "%</label><input name='vol' type='range' min='10' max='100' step='10' value='" + String(cfg.volume) + "'>";
-  h += "<label>nachtdim-niveau: " + String(cfg.dim_pct) + "%</label><input name='dim' type='range' min='5' max='60' step='5' value='" + String(cfg.dim_pct) + "'>";
-  h += "<label>helderheid: " + String(cfg.bright_pct) + "%</label><input name='bright' type='range' min='20' max='100' step='10' value='" + String(cfg.bright_pct) + "'>";
-  h += "<label>helderheid op accu: " + String(cfg.bright_bat) + "%</label><input name='brightb' type='range' min='10' max='100' step='10' value='" + String(cfg.bright_bat) + "'>";
-  h += "<label>alarmgeluid</label><select name='astyle'>";
-  const char *asty[3] = {"zacht", "klassiek", "fel"};
+  h += String("<label>") + TR("nachtdim-niveau: ", "night dim level: ") + String(cfg.dim_pct) + "%</label><input name='dim' type='range' min='5' max='60' step='5' value='" + String(cfg.dim_pct) + "'>";
+  h += String("<label>") + TR("helderheid: ", "brightness: ") + String(cfg.bright_pct) + "%</label><input name='bright' type='range' min='20' max='100' step='10' value='" + String(cfg.bright_pct) + "'>";
+  h += String("<label>") + TR("helderheid op accu: ", "brightness on battery: ") + String(cfg.bright_bat) + "%</label><input name='brightb' type='range' min='10' max='100' step='10' value='" + String(cfg.bright_bat) + "'>";
+  h += String("<label>") + TR("alarmgeluid", "alarm sound") + "</label><select name='astyle'>";
   for (int i = 0; i < 3; i++)
-    h += "<option value='" + String(i) + "'" + (cfg.alarm_style == i ? " selected" : "") + ">" + asty[i] + "</option>";
+    h += "<option value='" + String(i) + "'" + (cfg.alarm_style == i ? " selected" : "") + ">" + alarm_style_name(i) + "</option>";
   h += "</select>";
-  h += "<label>alarm herhalen (1-10x)</label><input name='areps' type='number' min='1' max='10' value='" + String(cfg.alarm_repeats) + "'>";
-  h += "<label>nacht van (uur)</label><input name='nstart' type='number' min='0' max='23' value='" + String(cfg.night_start) + "'>";
-  h += "<label>nacht tot (uur)</label><input name='nend' type='number' min='0' max='23' value='" + String(cfg.night_end) + "'>";
-  h += "<label>nachtmodus</label><select name='night'>";
-  const char *nopts[3] = {"uit", "dimmen", "amber klok"};
+  h += String("<label>") + TR("alarm herhalen (1-10x)", "repeat alarm (1-10x)") + "</label><input name='areps' type='number' min='1' max='10' value='" + String(cfg.alarm_repeats) + "'>";
+  h += String("<label>") + TR("nacht van (uur)", "night from (hour)") + "</label><input name='nstart' type='number' min='0' max='23' value='" + String(cfg.night_start) + "'>";
+  h += String("<label>") + TR("nacht tot (uur)", "night until (hour)") + "</label><input name='nend' type='number' min='0' max='23' value='" + String(cfg.night_end) + "'>";
+  h += String("<label>") + TR("nachtmodus", "night mode") + "</label><select name='night'>";
+  const char *nopts[3] = { TR("uit", "off"), TR("dimmen", "dim"), TR("amber klok", "amber clock") };
   for (int i = 0; i < 3; i++)
     h += "<option value='" + String(i) + "'" + (cfg.night_mode == i ? " selected" : "") + ">" + nopts[i] + "</option>";
   h += "</select>";
-  h += "<label>grafiekvenster</label><select name='ghours'>";
+  h += String("<label>") + TR("grafiekvenster", "graph window") + "</label><select name='ghours'>";
   const int gh[4] = {3, 6, 12, 24};
   for (int i = 0; i < 4; i++)
-    h += "<option value='" + String(gh[i]) + "'" + (cfg.graph_hours == gh[i] ? " selected" : "") + ">" + String(gh[i]) + " uur</option>";
+    h += "<option value='" + String(gh[i]) + "'" + (cfg.graph_hours == gh[i] ? " selected" : "") + ">" + String(gh[i]) + TR(" uur", " hours") + "</option>";
   h += "</select>";
-  h += "<label>kleur & stijl</label><select name='theme'>";
+  h += String("<label>") + TR("kleur & stijl", "colour & style") + "</label><select name='theme'>";
   for (int i = 0; i < THEME_COUNT; i++)
     h += "<option value='" + String(i) + "'" + (cfg.theme == i ? " selected" : "") + ">"
-       + THEME_PRESETS[i].name + (THEME_PRESETS[i].script ? " (sierlijk)" : " (strak)") + "</option>";
+       + th_name_i(i) + (THEME_PRESETS[i].script ? TR(" (sierlijk)", " (script)") : TR(" (strak)", " (clean)")) + "</option>";
   h += "</select>";
-  h += String("<div class='row'><label><input type='checkbox' name='alarms'") + (cfg.alarms_on ? " checked" : "") + ">alarmen aan</label></div>";
-  h += String("<div class='row'><label><input type='checkbox' name='fast'") + (cfg.alarm_fast ? " checked" : "") + ">snel-dalend alarm</label></div>";
-  h += String("<div class='row'><label><input type='checkbox' name='nodata'") + (cfg.alarm_nodata ? " checked" : "") + ">geen-data alarm</label></div>";
-  h += String("<div class='row'><label><input type='checkbox' name='qhigh'") + (cfg.quiet_high_night ? " checked" : "") + ">hoog-alarm stil 's nachts</label></div>";
-  h += "<button>opslaan</button></form>";
-  h += "<p><a href='/'>&larr; terug</a></p>";
-  h += "<small style='color:#90a0ac'>wifi en dexcom-login wijzig je op het apparaat zelf</small></body></html>";
+  h += String("<div class='row'><label><input type='checkbox' name='alarms'") + (cfg.alarms_on ? " checked" : "") + ">" + TR("alarmen aan", "alarms on") + "</label></div>";
+  h += String("<div class='row'><label><input type='checkbox' name='fast'") + (cfg.alarm_fast ? " checked" : "") + ">" + TR("snel-dalend alarm", "fast-drop alarm") + "</label></div>";
+  h += String("<div class='row'><label><input type='checkbox' name='nodata'") + (cfg.alarm_nodata ? " checked" : "") + ">" + TR("geen-data alarm", "no-data alarm") + "</label></div>";
+  h += String("<div class='row'><label><input type='checkbox' name='qhigh'") + (cfg.quiet_high_night ? " checked" : "") + ">" + TR("hoog-alarm stil 's nachts", "high alarm quiet at night") + "</label></div>";
+  h += String("<button>") + TR("opslaan", "save") + "</button></form>";
+  h += String("<p><a href='/'>&larr; ") + TR("terug", "back") + "</a></p>";
+  h += String("<small style='color:#90a0ac'>") + TR("wifi en dexcom-login wijzig je op het apparaat zelf",
+                                                    "wifi and dexcom login can only be changed on the device")
+     + "</small></body></html>";
   web.send(200, "text/html", h);
 }
 
@@ -1079,6 +1133,7 @@ static void web_settings_save() {
     nm[k] = '\0';
     if (nm[0]) strncpy(cfg.display_name, nm, sizeof(cfg.display_name));
   }
+  if (web.hasArg("lang")) cfg.lang = constrain(web.arg("lang").toInt(), 0, 1);
   if (web.hasArg("unit")) cfg.use_mmol = (web.arg("unit") == "mmol");
   if (web.hasArg("low"))  cfg.low_mmol  = constrain(web.arg("low").toFloat(), 3.0f, 6.5f);
   if (web.hasArg("high")) cfg.high_mmol = constrain(web.arg("high").toFloat(), 7.0f, 20.0f);
@@ -1102,7 +1157,7 @@ static void web_settings_save() {
   cfg.quiet_high_night = web.hasArg("qhigh");
   config_save();
   render();                              // the screen follows immediately
-  web.sendHeader("Location", "/instellingen?ok=1");
+  web.sendHeader("Location", String(TR("/instellingen", "/settings")) + "?ok=1");
   web.send(303, "text/plain", "");
 }
 
@@ -1126,6 +1181,13 @@ void setup() {
   beeps_begin();
   battery_begin();
   battery_poll();
+
+  // Fresh installs pick a language first; devices updated from an older
+  // version silently keep Dutch (changeable in the system menu).
+  if (cfg.lang == 255) {
+    if (cfg.accepted) { cfg.lang = 0; config_save(); }
+    else screen_language();
+  }
 
   screen_disclaimer();
 
@@ -1155,6 +1217,8 @@ void setup() {
   web.on("/api", web_api);
   web.on("/instellingen", HTTP_GET, web_settings_form);
   web.on("/instellingen", HTTP_POST, web_settings_save);
+  web.on("/settings", HTTP_GET, web_settings_form);
+  web.on("/settings", HTTP_POST, web_settings_save);
   web.begin();
 
   last_fetch_ms = 0;                    // fetch immediately

@@ -24,6 +24,8 @@ zelf.
 
 ## Features
 
+- Volledig tweetalig: Nederlands en Engels — taalkeuze bij de eerste start,
+  later omschakelbaar in het systeemmenu of via de webinterface
 - Waarde-cirkel in app-stijl (geel bij hoog, rood bij laag), trendpijl, delta
 - Grafiek 3/6/12/24 uur met doelband en drempellijnen
 - Dagoverzicht: tijd-in-bereik, gemiddelde, min/max, aantal lows (24h)

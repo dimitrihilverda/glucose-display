@@ -1,6 +1,6 @@
 {
   "name": "glucose-display",
-  "version": "1.9",
+  "version": "2.0",
   "new_install_prompt_erase": true,
   "builds": [
     {

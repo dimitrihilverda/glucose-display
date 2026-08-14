@@ -70,8 +70,8 @@ static void kb2_draw(const char *title, const char *val, bool mask) {
   }
   kb2_key(SCR_W - 48, y0 + 2 * KB_KEY_H, 48, "<", false, false);
   kb2_key(0, y0 + 3 * KB_KEY_H, 64, kb_layer == 2 ? "abc" : "123", false, false);
-  kb2_key(64, y0 + 3 * KB_KEY_H, 128, "spatie", false, false);
-  kb2_key(192, y0 + 3 * KB_KEY_H, 64, "stop", false, true);
+  kb2_key(64, y0 + 3 * KB_KEY_H, 128, TR("spatie", "space"), false, false);
+  kb2_key(192, y0 + 3 * KB_KEY_H, 64, TR("stop", "done"), false, true);
   kb2_key(256, y0 + 3 * KB_KEY_H, 64, "OK", true, false);
   gfx->flush();
 }

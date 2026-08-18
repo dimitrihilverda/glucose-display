@@ -1,87 +1,95 @@
 # glucose-display
 
-Bouw je eigen Dexcom-nachtkastje: live glucosewaarden op een ESP32-S3
-touchscreen van ~€30, in de stijl van de Dexcom-app. Grote waarde met
-trendpijl, grafiek met doelband, dagstatistieken, alarmen via de speaker,
-amber nachtklok, webinterface — en de complete setup gebeurt op het scherm
-zelf.
+Build your own Dexcom bedside display: live glucose readings on a ~€30
+ESP32-S3 touchscreen, in the idiom of the Dexcom app. Large value with trend
+arrow, graph with target band, daily statistics, alarms through a speaker,
+amber night clock, web interface — and the entire setup happens on the screen
+itself.
 
-**➡️ Flashen zonder toolchain: [de web-flasher](https://dimitrihilverda.github.io/glucose-display/)**
-(Chrome/Edge + USB-kabel, klaar in een halve minuut.)
+**➡️ Flash it without a toolchain: [the web flasher](https://dimitrihilverda.github.io/glucose-display/)**
+(Chrome/Edge + a USB cable, done in half a minute.)
 
-> **Geen medisch hulpmiddel.** Waarden lopen via Dexcom Share en kunnen
-> achterlopen, wegvallen of afwijken. Behandelbeslissingen horen op de
-> officiële Dexcom-app of een bloedglucosemeter — dit kastje is een
-> extraatje, nooit je vangnet.
+> **Not a medical device.** Readings travel via Dexcom Share and can be
+> delayed, missing or wrong. Treatment decisions belong on the official Dexcom
+> app or a blood glucose meter — this display is a nicety, never your safety
+> net.
 
-## Wat je nodig hebt
+## What you need
 
-- **Guition JC3248W535C** — 3.5" ESP32-S3 touchscreen (480×320, capacitief),
-  ~€30 op AliExpress
-- Een **Dexcom CGM** met Share aan en minstens één volger in de app
-- Optioneel: speakertje 8Ω/2W aan de JST 1.25 (alarmen), LiPo 103450 (snoerloos;
-  percentage wordt via de ADC uitgelezen)
+- **Guition JC3248W535C** — 3.5" ESP32-S3 touchscreen (480×320, capacitive),
+  ~€30 on AliExpress
+- A **Dexcom CGM** with Share enabled and at least one follower in the app
+- Optional: an 8Ω/2W speaker on the JST 1.25 header (alarms), a LiPo 103450
+  for cordless use (percentage is read through the ADC)
 
 ## Features
 
-- Volledig tweetalig: Nederlands en Engels — taalkeuze bij de eerste start,
-  later omschakelbaar in het systeemmenu of via de webinterface
-- Waarde-cirkel in app-stijl (geel bij hoog, rood bij laag), trendpijl, delta
-- Grafiek 3/6/12/24 uur met doelband en drempellijnen
-- Dagoverzicht: tijd-in-bereik, gemiddelde, min/max, aantal lows (24h)
-- Alarmen: laag / hoog / snel-dalend / geen-data — herhalend tot je tikt,
-  aantal en stijl (zacht/klassiek/fel) instelbaar, hoog-alarm optioneel stil
-  's nachts, testmenu om alles vooraf te horen
-- Nachtvenster instelbaar: dimmen of amber nachtklok; goedemorgen-groet
-- Naam op het display (schoonschrift + hartje of blokletters) en zes
-  kleurthema's
-- Webinterface op het board-IP: status + alle instellingen (behalve logins),
-  achter een apparaat-gegenereerd wachtwoord
-- Accubeheer: percentage/laadstatus, automatisch dimmen op accu
+- Fully bilingual: English and Dutch — language picker on first boot,
+  switchable later in the system menu or through the web interface
+- App-style value circle (yellow when high, red when low), trend arrow, delta
+- Graph over 3/6/12/24 hours with target band and threshold lines
+- Daily overview: time in range, average, min/max, number of lows (24h)
+- Alarms: low / high / fast-drop / no-data — repeating until you tap, with
+  configurable count and style (soft/classic/loud), high alarm optionally
+  silent at night, and a test menu to hear everything up front
+- Configurable night window: dim or amber night clock; good-morning greeting
+- A name on the display (script with a heart, or block letters) and six colour
+  themes
+- Web interface on the board's IP: status plus every setting (except logins),
+  behind a device-generated password
+- Battery handling: percentage, charge state, automatic dimming on battery
 
 ## Privacy & security
 
-Dexcom- en WiFi-inloggegevens bestaan alleen in NVS op het apparaat en zijn
-via het netwerk niet leesbaar of wijzigbaar; het apparaat praat uitsluitend
-via TLS met Dexcom (Share-API, dezelfde route als xDrip+/pydexcom — vereist
-Share met ≥1 volger). De webinterface zit achter HTTP Basic Auth (wachtwoord
-staat alleen op het credits-scherm), met bescherming tegen DNS-rebinding en
-cross-site posts. Bedoeld voor je eigen LAN; niet naar internet openzetten.
+Dexcom and WiFi credentials exist only in NVS on the device and can never be
+read or changed over the network; the device talks exclusively to Dexcom over
+TLS (the Share API — the same route as xDrip+/pydexcom, which requires Share
+with ≥1 follower). The web interface sits behind HTTP basic auth (the password
+appears only on the credits screen), with protection against DNS rebinding and
+cross-site posts. Meant for your own LAN; do not expose the device to the
+internet.
 
-De officiële Dexcom developer-API is bewust 1-3 uur vertraagd en daarom
-ongeschikt voor live weergave.
+The official Dexcom developer API is delayed by 1-3 hours by design and is
+therefore unsuitable for a live display.
 
-## Zelf bouwen
+## Building it yourself
 
 ```bash
 arduino-cli lib install "GFX Library for Arduino" ArduinoJson
 arduino-cli compile --fqbn 'esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi' --build-path build firmware/esp32_glucose
-esptool --chip esp32s3 --port <POORT> --baud 921600 --after watchdog-reset write-flash 0x0 build/esp32_glucose.ino.bootloader.bin 0x8000 build/esp32_glucose.ino.partitions.bin 0xe000 build/boot_app0.bin 0x10000 build/esp32_glucose.ino.bin
+esptool --chip esp32s3 --port <PORT> --baud 921600 --after watchdog-reset write-flash 0x0 build/esp32_glucose.ino.bootloader.bin 0x8000 build/esp32_glucose.ino.partitions.bin 0xe000 build/boot_app0.bin 0x10000 build/esp32_glucose.ino.bin
 ```
 
-Let op: het board hangt aan de native USB-Serial/JTAG — gebruik esptool's
-`--after watchdog-reset` (de klassieke RTS-reset doet niets). Serial meelezen:
-`python tools/capture_serial.py <esptool> log.txt 30 <POORT>`.
+Note: the board hangs off native USB-Serial/JTAG — use esptool's
+`--after watchdog-reset` (the classic RTS reset does nothing). To follow the
+serial output: `python tools/capture_serial.py <esptool> log.txt 30 <PORT>`.
 
-## Board-pinnen (JC3248W535C)
+## Board pins (JC3248W535C)
 
 | | |
 |---|---|
 | Display | AXS15231B QSPI: CS=45 SCK=47 D0=21 D1=48 D2=40 D3=39, backlight=1 (PWM) |
-| Touch | zelfde chip, I2C: SDA=4 SCL=8 INT=3, adres 0x3B |
-| Speaker | NS4168 I2S: BCLK=42 LRCLK=2 DOUT=41 (JST 1.25; de andere JST 1.25 is de accu!) |
-| Accu | spanning op GPIO5 via deler ×1,72 (ADC); IP5306-laadchip zonder I2C |
+| Touch | same chip, I2C: SDA=4 SCL=8 INT=3, address 0x3B |
+| Speaker | NS4168 I2S: BCLK=42 LRCLK=2 DOUT=41 (JST 1.25; the other JST 1.25 is the battery!) |
+| Battery | voltage on GPIO5 through a ×1.72 divider (ADC); IP5306 charger without I2C |
 
-Paneel-eigenaardigheden: geen hardware-rotatie, partial writes onbetrouwbaar →
-full-frame canvas in PSRAM; QSPI op 40 MHz (sneller geeft kleur-shimmer).
+Panel quirks: no hardware rotation, partial writes unreliable → full-frame
+canvas in PSRAM; QSPI at 40 MHz (faster causes colour shimmer).
 
 ## Tools
 
-- `tools/ttf2gfx.py` — TTF → GFXfont-headers (Segoe UI/Script/Impact in `fonts.h`)
-- `tools/capture_serial.py` — watchdog-reset + serial-log
+- `tools/ttf2gfx.py` — TTF → GFXfont headers (Segoe UI/Script/Impact in `fonts.h`)
+- `tools/capture_serial.py` — watchdog reset + serial log
+
+## Adding a language
+
+Every user-visible string goes through the `TR(nl, en)` macro in `config.h`,
+with the choice stored in NVS. German and French need a wider table *and*
+accented glyphs (ä, é, ç), which means extending the charset in
+`tools/ttf2gfx.py` and regenerating `fonts.h` first.
 
 ---
-Met liefde gebouwd door Dimitri & Claude. Dank aan de DIY-diabetes-community
-(pydexcom, xDrip+) voor de Share-route en aan het JC3248W535-forumvolk voor de
-accu-pinout. Dexcom is een merk van Dexcom, Inc.; dit project is er niet aan
-verbonden. MIT.
+Built with love by Dimitri & Claude. Thanks to the DIY diabetes community
+(pydexcom, xDrip+) for the Share route, and to the JC3248W535 forum crowd for
+the battery pinout. Dexcom is a trademark of Dexcom, Inc.; this project is not
+affiliated with it. MIT.
